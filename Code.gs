@@ -2,6 +2,15 @@
    판매 베스트 대시보드 — Apps Script API
    -----------------------------------------------------------
    배포: 웹 앱으로 배포 > 액세스 권한 "모든 사람"
+
+   시트 컬럼 구조 (0-based index):
+   A(0)=이미지  B(1)=대분류  C(2)=소분류  D(3)=년도
+   E(4)=소분류&시즌  F(5)=시즌  G(6)=상품명  H(7)=원가
+   I(8)=판매가  J(9)=대표바코드  K(10)=금주판매  L(11)=금주매출
+   M(12)=1월낮판매수량  N(13)=1월낮판매금액
+   O(14)=W1수량  P(15)=W1금액
+   Q(16)=2주수량  R(17)=2주매출 ...
+   Y(24)=2월낮판매수량  Z(25)=2월낮판매금액 ...
    =========================================================== */
 
 const STORE_NAMES = [
@@ -18,13 +27,10 @@ const STORE_COLORS = {
   '원주':'#1b5e20','마리오':'#ff8f00','창원':'#0d47a1'
 };
 
-// 상품명 접두어 → 분류
-const CAT_MAP = {
-  '장화':'레인','우비':'레인','레인':'레인',
-  '샌들':'슈즈','아쿠아':'슈즈','젤리':'슈즈','슬립온':'슈즈','구두':'슈즈',
-  '원피스':'의류','세트':'의류','하의':'의류','상의':'의류',
-  '아우터':'의류','수영복':'의류','래쉬가드':'의류'
-};
+// 시트 고정 컬럼 인덱스
+const COL_CAT   = 1;  // B: 대분류 (의류/레인/슈즈/잡화/시즌)
+const COL_NAME  = 6;  // G: 상품명
+const COL_PRICE = 8;  // I: 판매가
 
 // ── 진입점 ────────────────────────────────────────────────
 function doGet(e) {
@@ -43,7 +49,6 @@ function doGet(e) {
         const products = readStore(sheet, mode, period);
         allStore.push({ name, color: STORE_COLORS[name] || '#1565c0', products });
       } catch (err) {
-        // 매장 시트 오류 시 빈 배열로 처리
         allStore.push({ name, color: STORE_COLORS[name] || '#1565c0', products: [] });
       }
     });
@@ -83,7 +88,6 @@ function readStore(sheet, mode, period) {
   if (mode === 'cumulative') {
     cumCols = findCumulativeColumns(headers);
     if (cumCols.length === 0) {
-      // 누적 컬럼이 없으면 금주 사용
       qtyIdx = findCol(headers, '금주판매');
       revIdx = findCol(headers, '금주매출');
     }
@@ -96,7 +100,8 @@ function readStore(sheet, mode, period) {
 
   const products = [];
   rows.forEach(row => {
-    const name = String(row[1] || '').trim();
+    // G열(index 6) = 상품명
+    const name = String(row[COL_NAME] || '').trim();
     if (!name) return;
 
     let qty = 0, rev = 0;
@@ -114,12 +119,14 @@ function readStore(sheet, mode, period) {
 
     if (qty <= 0 && rev <= 0) return;
 
-    const prefix = name.split('-')[0];
+    // B열(index 1) = 대분류 (의류/레인/슈즈/잡화/시즌)
+    const cat = String(row[COL_CAT] || '').trim() || '기타';
+
     products.push({
-      i: String(row[0] || ''),
-      c: CAT_MAP[prefix] || '기타',
+      i: '',                         // CellImage는 URL로 읽을 수 없음
+      c: cat,
       n: name,
-      p: Number(row[2]) || 0,
+      p: Number(row[COL_PRICE]) || 0, // I열(index 8) = 판매가
       q: qty,
       s: rev
     });
@@ -154,14 +161,13 @@ function findPeriodColumns(headers, period) {
   );
   if (anchor < 0) return null;
 
-  // anchor+0 = 월수량, anchor+1 = 월금액
   // anchor+2 = W1수량, anchor+3 = W1금액
-  // anchor+4 = W2수량, anchor+5 = W2금액 ...
+  // anchor+4 = 2주수량, anchor+5 = 2주매출 ...
   const offset = weekNum * 2;
   return { qty: anchor + offset, rev: anchor + offset + 1 };
 }
 
-// 26년 누적: 모든 "N월 낮판매수량/금액" 컬럼 수집
+// 누적: 모든 "N월 낮판매수량/금액" 컬럼 수집
 function findCumulativeColumns(headers) {
   const cols = [];
   for (let m = 1; m <= 12; m++) {
@@ -182,10 +188,9 @@ function aggregate(allStore, topN) {
   allStore.forEach(({ products }) => {
     products.forEach(p => {
       if (!map[p.n]) {
-        map[p.n] = { i: p.i || '', c: p.c, n: p.n, p: p.p, q: 0, s: 0 };
+        map[p.n] = { i: '', c: p.c, n: p.n, p: p.p, q: 0, s: 0 };
       }
-      // 이미지/가격은 첫 번째 non-empty 값 유지
-      if (!map[p.n].i && p.i) map[p.n].i = p.i;
+      if (!map[p.n].p && p.p) map[p.n].p = p.p;
       map[p.n].q += p.q;
       map[p.n].s += p.s;
     });
@@ -194,40 +199,36 @@ function aggregate(allStore, topN) {
 }
 
 // ── 사용 가능 주차 목록 생성 ──────────────────────────────
+// 헤더에서 "N월 낮판매수량" 컬럼을 찾아 주차 목록 생성
+// 여러 매장 시트를 순서대로 검색하여 첫 번째로 데이터가 있는 시트 사용
 function buildPeriodList(ss) {
-  const sheet = ss.getSheetByName(STORE_NAMES[0]);
-  if (!sheet) return [];
+  for (const storeName of STORE_NAMES) {
+    const sheet = ss.getSheetByName(storeName);
+    if (!sheet) continue;
 
-  const lastRow = sheet.getLastRow();
-  const lastCol = sheet.getLastColumn();
-  const headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+    const lastCol = sheet.getLastColumn();
+    if (lastCol < 1) continue;
 
-  // 2행(합계행) 먼저 시도, 합계가 모두 0이면 3행~ 데이터를 열 단위로 합산
-  let checkRow = sheet.getRange(2, 1, 1, lastCol).getValues()[0];
-  const rowSum = checkRow.reduce((a, b) => a + (Number(b) || 0), 0);
-  if (rowSum === 0 && lastRow >= 3) {
-    const dataRows = sheet.getRange(3, 1, lastRow - 2, lastCol).getValues();
-    checkRow = Array(lastCol).fill(0).map((_, ci) =>
-      dataRows.reduce((s, r) => s + (Number(r[ci]) || 0), 0)
-    );
-  }
+    const headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+    const periods = [];
 
-  const periods = [];
-  for (let m = 1; m <= 12; m++) {
-    const anchor = headers.findIndex(h =>
-      String(h || '').includes(m + '월') && String(h || '').includes('낮판매수량')
-    );
-    if (anchor < 0) continue;
+    for (let m = 1; m <= 12; m++) {
+      const anchor = headers.findIndex(h =>
+        String(h || '').includes(m + '월') && String(h || '').includes('낮판매수량')
+      );
+      if (anchor < 0) continue;
 
-    // 최대 6주까지 체크
-    for (let w = 1; w <= 6; w++) {
-      const qIdx = anchor + w * 2;
-      if (qIdx >= checkRow.length) break;
-      const total = Number(checkRow[qIdx]) || 0;
-      if (total > 0) {
+      for (let w = 1; w <= 6; w++) {
+        const qIdx = anchor + w * 2;
+        if (qIdx >= lastCol) break;
+        // 다음 달 앵커 컬럼이면 중단
+        const colHeader = String(headers[qIdx] || '');
+        if (colHeader.includes('낮판매수량')) break;
         periods.push({ label: m + '월 ' + w + '주차', value: m + '월' + w + '주' });
       }
     }
+
+    if (periods.length > 0) return periods;
   }
-  return periods;
+  return [];
 }
