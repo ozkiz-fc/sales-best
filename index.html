@@ -444,7 +444,9 @@
 
   // ── 캐시 키 ──
   function cacheKey() {
-    return state.mode === 'cumulative' ? 'cumulative' : 'weekly_' + state.week;
+    if (state.mode === 'cumulative') return 'cumulative';
+    if (state.week) return 'weekly_' + state.week;
+    return null; // 주차 미선택 시 캐시 없음
   }
 
   // ── 탭 전환 ──
@@ -470,18 +472,14 @@
     sel.style.display = mode === 'weekly' ? 'inline-block' : 'none';
     document.getElementById('no-periods-notice').style.display = 'none';
 
-    if (mode === 'weekly') {
-      if (sel.options.length <= 1) {
-        // 주차 목록 없음 → Apps Script 미업데이트 안내
-        document.getElementById('no-periods-notice').style.display = 'flex';
-        return;
-      }
+    if (mode === 'weekly' && sel.options.length > 1) {
+      // 주차 목록 이미 있으면 첫 번째 선택
       if (!state.week) {
         sel.selectedIndex = 1;
         state.week = sel.value;
       }
     }
-
+    // 주차 목록 없어도 loadData() 호출 → 데이터 로드 후 자동 처리
     loadData();
   }
 
@@ -507,7 +505,7 @@
   // ── 데이터 로드 ──
   async function loadData() {
     const key = cacheKey();
-    if (state.cache[key]) {
+    if (key && state.cache[key]) {
       renderContent(state.cache[key]);
       return;
     }
@@ -530,7 +528,7 @@
       const data = await res.json();
       if (data.error) throw new Error(data.error);
 
-      state.cache[key] = data;
+      if (key) state.cache[key] = data;
 
       // 업데이트 시각
       if (data.updatedAt) {
@@ -539,13 +537,28 @@
 
       // 주차 드롭다운 최초 1회 채우기
       const sel = document.getElementById('week-select');
-      if (data.periods && data.periods.length > 0 && sel.options.length <= 1) {
+      const wasEmpty = sel.options.length <= 1;
+      if (data.periods && data.periods.length > 0 && wasEmpty) {
         data.periods.forEach(p => {
           const opt = document.createElement('option');
           opt.value = p.value;
           opt.textContent = p.label;
           sel.appendChild(opt);
         });
+        // 주차별 모드인데 주차가 아직 미선택 → 첫 번째 자동 선택 후 재요청
+        if (state.mode === 'weekly' && !state.week) {
+          sel.selectedIndex = 1;
+          state.week = sel.value;
+          loadData();
+          return;
+        }
+      }
+
+      // 주차별인데 periods가 없으면 안내 표시
+      if (state.mode === 'weekly' && sel.options.length <= 1) {
+        document.getElementById('no-periods-notice').style.display = 'flex';
+        showContent();
+        return;
       }
 
       renderContent(data);
