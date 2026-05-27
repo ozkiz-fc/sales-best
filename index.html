@@ -383,23 +383,24 @@
   }
 
   // ── 전체 베스트 TOP 20 렌더 ──
+  // API 필드: i=이미지, c=분류, n=제품명, p=판매가, q=판매수, s=매출
   function renderOverall(items) {
-    const maxRevenue = Math.max(...items.map(x => x.revenue || 0));
+    const maxRevenue = Math.max(...items.map(x => x.s || 0));
     const tbody = document.getElementById('overall-tbody');
     tbody.innerHTML = items.map((item, idx) => {
       const rank = idx + 1;
-      const barWidth = maxRevenue > 0 ? Math.round((item.revenue / maxRevenue) * 80) : 0;
+      const barWidth = maxRevenue > 0 ? Math.round((item.s / maxRevenue) * 80) : 0;
       return `<tr class="rank-${rank}">
         ${rankCell(rank)}
-        ${imgCell(item.img)}
-        <td class="category-cell"><span class="category-badge">${item.category || '-'}</span></td>
-        <td class="name-cell">${item.name || '-'}</td>
-        <td class="price-cell">${fmt.price(item.price || 0)}</td>
-        <td class="qty-cell">${fmt.qty(item.qty || 0)}</td>
+        ${imgCell(item.i)}
+        <td class="category-cell"><span class="category-badge">${item.c || '-'}</span></td>
+        <td class="name-cell">${item.n || '-'}</td>
+        <td class="price-cell">${fmt.price(item.p || 0)}</td>
+        <td class="qty-cell">${fmt.qty(item.q || 0)}</td>
         <td class="sales-cell">
           <div class="sales-bar-wrap">
             <div class="sales-bar" style="width:${barWidth}px"></div>
-            <span class="sales-num">${fmt.price(item.revenue || 0)}</span>
+            <span class="sales-num">${fmt.price(item.s || 0)}</span>
           </div>
         </td>
       </tr>`;
@@ -407,19 +408,20 @@
   }
 
   // ── 매장별 베스트 TOP 10 렌더 ──
+  // API 필드: store.products = 상품 배열
   function renderStores(stores) {
     const grid = document.getElementById('stores-grid');
     grid.innerHTML = stores.map((store, si) => {
       const color = store.color || STORE_COLORS[si % STORE_COLORS.length];
-      const rows = store.items && store.items.length > 0
-        ? store.items.map((item, idx) => {
+      const rows = store.products && store.products.length > 0
+        ? store.products.map((item, idx) => {
             const rank = idx + 1;
             return `<tr class="rank-${rank}">
               ${rankCell(rank)}
-              ${imgCell(item.img)}
-              <td class="name-cell">${item.name || '-'}</td>
-              <td class="qty-cell">${fmt.qty(item.qty || 0)}</td>
-              <td class="sales-cell">${fmt.price(item.revenue || 0)}</td>
+              ${imgCell(item.i)}
+              <td class="name-cell">${item.n || '-'}</td>
+              <td class="qty-cell">${fmt.qty(item.q || 0)}</td>
+              <td class="sales-cell">${fmt.price(item.s || 0)}</td>
             </tr>`;
           }).join('')
         : `<tr class="empty-row"><td colspan="5">판매 데이터 없음</td></tr>`;
@@ -470,8 +472,8 @@
       const data = await res.json();
 
       // 업데이트 시각
-      if (data.updated) {
-        document.getElementById('updated-at').textContent = data.updated + ' 업데이트';
+      if (data.updatedAt) {
+        document.getElementById('updated-at').textContent = data.updatedAt + ' 업데이트';
       }
 
       // 전체 베스트
