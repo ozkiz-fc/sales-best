@@ -198,9 +198,19 @@ function buildPeriodList(ss) {
   const sheet = ss.getSheetByName(STORE_NAMES[0]);
   if (!sheet) return [];
 
+  const lastRow = sheet.getLastRow();
   const lastCol = sheet.getLastColumn();
   const headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
-  const totals  = sheet.getRange(2, 1, 1, lastCol).getValues()[0]; // 합계 행
+
+  // 2행(합계행) 먼저 시도, 합계가 모두 0이면 3행~ 데이터를 열 단위로 합산
+  let checkRow = sheet.getRange(2, 1, 1, lastCol).getValues()[0];
+  const rowSum = checkRow.reduce((a, b) => a + (Number(b) || 0), 0);
+  if (rowSum === 0 && lastRow >= 3) {
+    const dataRows = sheet.getRange(3, 1, lastRow - 2, lastCol).getValues();
+    checkRow = Array(lastCol).fill(0).map((_, ci) =>
+      dataRows.reduce((s, r) => s + (Number(r[ci]) || 0), 0)
+    );
+  }
 
   const periods = [];
   for (let m = 1; m <= 12; m++) {
@@ -212,8 +222,8 @@ function buildPeriodList(ss) {
     // 최대 6주까지 체크
     for (let w = 1; w <= 6; w++) {
       const qIdx = anchor + w * 2;
-      if (qIdx >= totals.length) break;
-      const total = Number(totals[qIdx]) || 0;
+      if (qIdx >= checkRow.length) break;
+      const total = Number(checkRow[qIdx]) || 0;
       if (total > 0) {
         periods.push({ label: m + '월 ' + w + '주차', value: m + '월' + w + '주' });
       }
