@@ -355,6 +355,18 @@
 <!-- ── 매장 선택 바 ── -->
 <div id="store-picker" class="store-picker"></div>
 
+<!-- ── Apps Script 미업데이트 안내 ── -->
+<div id="no-periods-notice" style="display:none; align-items:center; gap:12px; background:#fff8e1; border:1.5px solid #f9a825; border-radius:10px; padding:14px 20px; margin:16px 16px 0; font-size:.88rem; color:#5d4037; max-width:1200px; margin-left:auto; margin-right:auto;">
+  <span style="font-size:1.4rem">⚠️</span>
+  <div>
+    <strong>주차별 데이터를 보려면 Apps Script 업데이트가 필요합니다.</strong><br>
+    <span style="color:#795548">
+      Apps Script 편집기에서 <code style="background:#fef3c7;padding:1px 5px;border-radius:4px">Code.gs</code> 내용을
+      <a href="https://github.com/ozkiz-fc/sales-best/blob/main/Code.gs" target="_blank" style="color:#1565c0">GitHub의 최신 Code.gs</a>로 교체 후 재배포해 주세요.
+    </span>
+  </div>
+</div>
+
 <!-- ── 로딩 ── -->
 <div id="loading-screen">
   <div class="spinner"></div>
@@ -456,14 +468,17 @@
 
     const sel = document.getElementById('week-select');
     sel.style.display = mode === 'weekly' ? 'inline-block' : 'none';
+    document.getElementById('no-periods-notice').style.display = 'none';
 
-    if (mode === 'weekly' && !state.week) {
-      // 아직 주차 미선택 → 첫 번째 항목 자동 선택
-      if (sel.options.length > 1) {
+    if (mode === 'weekly') {
+      if (sel.options.length <= 1) {
+        // 주차 목록 없음 → Apps Script 미업데이트 안내
+        document.getElementById('no-periods-notice').style.display = 'flex';
+        return;
+      }
+      if (!state.week) {
         sel.selectedIndex = 1;
         state.week = sel.value;
-      } else {
-        return; // 주차 목록 없음
       }
     }
 
