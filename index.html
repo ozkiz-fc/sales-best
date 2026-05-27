@@ -16,9 +16,6 @@
       --text: #1a1a2e;
       --muted: #7a7a9d;
       --border: #e2e8f0;
-      --gold: #f59e0b;
-      --silver: #94a3b8;
-      --bronze: #d97706;
       --radius: 12px;
       --shadow: 0 2px 12px rgba(0,0,0,.08);
       --shadow-lg: 0 8px 32px rgba(0,0,0,.12);
@@ -35,26 +32,131 @@
     .site-header {
       background: linear-gradient(135deg, #1a237e 0%, #283593 60%, #1565c0 100%);
       color: #fff;
-      padding: 28px 24px 24px;
+      padding: 22px 24px 18px;
       text-align: center;
       box-shadow: rgba(26,35,126,.4) 0 4px 20px;
       position: sticky;
       top: 0;
-      z-index: 100;
+      z-index: 200;
     }
-    .site-header h1 { font-size: clamp(1.4rem, 4vw, 2rem); font-weight: 800; letter-spacing: -.5px; }
-    .site-header .subtitle { margin-top: 6px; font-size: .85rem; opacity: .8; }
+    .site-header h1 { font-size: clamp(1.3rem, 4vw, 1.8rem); font-weight: 800; letter-spacing: -.5px; }
+    .site-header .subtitle { margin-top: 4px; font-size: .8rem; opacity: .8; }
     .update-badge {
       display: inline-flex;
       align-items: center;
       gap: 6px;
-      margin-top: 10px;
+      margin-top: 8px;
       background: rgba(255,255,255,.15);
       border: 1px solid rgba(255,255,255,.25);
       border-radius: 20px;
-      padding: 4px 14px;
-      font-size: .8rem;
+      padding: 3px 12px;
+      font-size: .75rem;
     }
+
+    /* ── 메인 탭 ── */
+    .main-tabs {
+      background: var(--surface);
+      border-bottom: 2px solid var(--border);
+      display: flex;
+      position: sticky;
+      top: 93px;
+      z-index: 150;
+      box-shadow: var(--shadow);
+    }
+    .tab-btn {
+      flex: 1;
+      padding: 13px 16px;
+      font-size: .92rem;
+      font-weight: 700;
+      color: var(--muted);
+      background: none;
+      border: none;
+      cursor: pointer;
+      transition: color .2s, border-color .2s;
+      border-bottom: 3px solid transparent;
+      margin-bottom: -2px;
+    }
+    .tab-btn.active { color: var(--primary); border-bottom-color: var(--primary); }
+    .tab-btn:hover:not(.active) { color: var(--text); background: #f8fafc; }
+
+    /* ── 컨트롤 바 (기간 선택) ── */
+    .controls-bar {
+      background: var(--surface);
+      padding: 10px 16px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      border-bottom: 1px solid var(--border);
+      flex-wrap: wrap;
+      position: sticky;
+      top: 142px;
+      z-index: 140;
+    }
+    .period-btn {
+      padding: 6px 16px;
+      border-radius: 20px;
+      border: 1.5px solid var(--border);
+      background: #fff;
+      font-size: .82rem;
+      font-weight: 600;
+      color: var(--muted);
+      cursor: pointer;
+      transition: all .15s;
+    }
+    .period-btn.active {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }
+    .period-btn:hover:not(.active) { border-color: var(--accent); color: var(--accent); }
+
+    .week-select {
+      padding: 5px 10px;
+      border-radius: 8px;
+      border: 1.5px solid var(--border);
+      font-size: .82rem;
+      color: var(--text);
+      background: #fff;
+      cursor: pointer;
+      display: none;
+    }
+    .week-select:focus { outline: none; border-color: var(--accent); }
+
+    /* ── 매장 선택 바 ── */
+    .store-picker {
+      background: var(--surface);
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--border);
+      display: none;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      gap: 8px;
+      align-items: center;
+      position: sticky;
+      top: 186px;
+      z-index: 130;
+      white-space: nowrap;
+    }
+    .store-picker.visible { display: flex; }
+    .store-pill {
+      display: inline-block;
+      padding: 5px 14px;
+      border-radius: 16px;
+      border: 1.5px solid var(--border);
+      background: #fff;
+      font-size: .8rem;
+      font-weight: 600;
+      color: var(--muted);
+      cursor: pointer;
+      transition: all .15s;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .store-pill.active {
+      color: #fff;
+      border-color: transparent;
+    }
+    .store-pill:hover:not(.active) { border-color: #888; color: var(--text); }
 
     /* ── 로딩 ── */
     #loading-screen {
@@ -62,18 +164,18 @@
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      min-height: 60vh;
+      min-height: 55vh;
       gap: 20px;
     }
     .spinner {
-      width: 52px; height: 52px;
+      width: 48px; height: 48px;
       border: 5px solid var(--border);
       border-top-color: var(--primary);
       border-radius: 50%;
       animation: spin .9s linear infinite;
     }
     @keyframes spin { 100% { transform: rotate(360deg); } }
-    .loading-text { color: var(--muted); font-size: .95rem; }
+    .loading-text { color: var(--muted); font-size: .9rem; }
 
     /* ── 에러 ── */
     #error-screen {
@@ -86,91 +188,93 @@
       padding: 40px;
       text-align: center;
     }
-    #error-screen .icon { font-size: 3rem; }
-    #error-screen h2 { font-size: 1.15rem; color: var(--text); }
-    #error-screen p { color: var(--muted); font-size: .9rem; line-height: 1.6; }
+    #error-screen .icon { font-size: 2.8rem; }
+    #error-screen h2 { font-size: 1.1rem; }
+    #error-screen p { color: var(--muted); font-size: .88rem; line-height: 1.6; }
     #error-screen code {
-      background: #f1f5f9;
-      border-radius: 6px;
-      padding: 10px 16px;
-      font-size: .8rem;
-      display: block;
-      text-align: left;
-      word-break: break-all;
-      max-width: 560px;
-      color: var(--accent);
+      background: #f1f5f9; border-radius: 6px; padding: 8px 14px;
+      font-size: .78rem; display: block; text-align: left;
+      word-break: break-all; max-width: 560px; color: var(--accent);
     }
 
-    /* ── 메인 ── */
-    .main-content {
+    /* ── 메인 콘텐츠 ── */
+    #main-content {
       display: none;
       max-width: 1200px;
       margin: 0 auto;
-      padding: 28px 16px 60px;
+      padding: 24px 16px 80px;
     }
 
-    /* ── 섹션 타이틀 ── */
-    .section-title {
+    /* ── 섹션 헤더 ── */
+    .section-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 0;
+    }
+    .section-title-bar {
       display: flex;
       align-items: center;
       gap: 10px;
-      font-size: 1.2rem;
+      font-size: 1.1rem;
       font-weight: 800;
       color: #fff;
       background: var(--accent);
-      padding: 14px 20px;
+      padding: 13px 20px;
       border-radius: var(--radius) var(--radius) 0 0;
+      width: 100%;
     }
-    .section-title.store-section {
-      background: var(--store);
-      border-radius: var(--radius) var(--radius) 0 0;
-    }
+    .section-title-bar.store-style { background: var(--store); }
 
-    /* ── 전체 베스트 테이블 ── */
-    .overall-card {
+    /* ── 테이블 ── */
+    .table-card {
       background: var(--surface);
       border-radius: var(--radius);
       box-shadow: var(--shadow-lg);
       overflow: hidden;
-      margin-bottom: 40px;
     }
     .best-table { width: 100%; border-collapse: collapse; }
     .best-table thead th {
       background: #fce4e4;
       color: #8b1c1c;
-      font-size: .78rem;
+      font-size: .76rem;
       font-weight: 700;
       letter-spacing: .04em;
-      text-transform: uppercase;
-      padding: 12px 14px;
+      padding: 11px 14px;
       text-align: center;
       border-bottom: 2px solid #f5c6c6;
     }
     .best-table thead th:nth-child(4) { text-align: left; }
     .best-table thead th:nth-child(5),
     .best-table thead th:nth-child(7) { text-align: right; }
-    .best-table tbody tr { transition: background .15s; border-bottom: 1px solid var(--border); }
+    .best-table.store-style thead th {
+      background: #e3eaf8;
+      color: #1a237e;
+      border-bottom-color: #b8c8ee;
+    }
+    .best-table tbody tr { transition: background .12s; border-bottom: 1px solid var(--border); }
+    .best-table tbody tr:last-child { border-bottom: none; }
     .best-table tbody tr:hover { background: #f8faff; }
     .best-table tbody tr.rank-1 { background: #fffbeb; }
     .best-table tbody tr.rank-2 { background: #f8fafc; }
     .best-table tbody tr.rank-3 { background: #fff7ed; }
-    .best-table td { padding: 11px 14px; font-size: .88rem; vertical-align: middle; }
+    .best-table td { padding: 10px 14px; font-size: .87rem; vertical-align: middle; }
 
-    /* ── 공통 셀 ── */
-    .rank-cell { text-align: center; font-weight: 700; width: 64px; }
+    /* ── 셀 스타일 ── */
+    .rank-cell { text-align: center; font-weight: 700; width: 60px; }
     .rank-medal { font-size: 1.15rem; }
     .rank-num {
       display: inline-flex; align-items: center; justify-content: center;
-      width: 28px; height: 28px; border-radius: 50%;
-      font-size: .8rem; font-weight: 700;
+      width: 26px; height: 26px; border-radius: 50%;
+      font-size: .78rem; font-weight: 700;
       background: #e2e8f0; color: var(--muted);
     }
-    .category-cell { text-align: center; width: 80px; }
+    .category-cell { text-align: center; width: 72px; }
     .category-badge {
       display: inline-block;
       background: #e8eaf6; color: #3949ab;
-      font-size: .72rem; font-weight: 600;
-      padding: 3px 8px; border-radius: 20px;
+      font-size: .7rem; font-weight: 600;
+      padding: 2px 8px; border-radius: 20px;
     }
     .img-cell { width: 60px; text-align: center; padding: 6px 8px !important; }
     .prod-img {
@@ -186,134 +290,93 @@
       display: flex; align-items: center; justify-content: center;
       font-size: 1.2rem; margin: 0 auto;
     }
-    .name-cell { font-weight: 600; color: var(--text); }
-    .price-cell, .qty-cell { text-align: right; color: var(--muted); font-size: .83rem; white-space: nowrap; }
-    .sales-cell { text-align: right; font-weight: 700; color: var(--accent); font-size: .95rem; white-space: nowrap; }
-    .sales-bar-wrap { display: flex; align-items: center; gap: 8px; justify-content: flex-end; }
-    .sales-bar {
-      height: 6px; border-radius: 3px;
-      background: linear-gradient(90deg, #1565c0, #42a5f5);
-      min-width: 4px; transition: width .6s;
+    .name-cell { font-weight: 600; }
+    .price-cell, .qty-cell { text-align: right; color: var(--muted); font-size: .82rem; white-space: nowrap; }
+    .sales-cell {
+      text-align: right; font-weight: 700;
+      color: var(--accent); font-size: .95rem; white-space: nowrap;
     }
-    .sales-num { font-weight: 700; font-size: .9rem; white-space: nowrap; }
+    .sales-cell.store-style { color: var(--store); font-size: .88rem; }
 
-    /* ── 매장별 그리드 ── */
-    .stores-section-header {
-      display: flex; align-items: center; justify-content: space-between;
-      margin-bottom: 20px;
-    }
-    .stores-section-title {
-      display: flex; align-items: center; gap: 10px;
-      font-size: 1.2rem; font-weight: 800; color: var(--text);
-    }
-    .stores-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-      gap: 24px;
-    }
-    .store-card {
-      background: var(--surface);
-      border-radius: var(--radius);
-      box-shadow: var(--shadow);
-      overflow: hidden;
-      transition: box-shadow .2s, transform .2s;
-    }
-    .store-card:hover { box-shadow: var(--shadow-lg); transform: translateY(-2px); }
-    .store-header {
-      display: flex; align-items: center; justify-content: space-between;
-      padding: 12px 16px; color: #fff;
-    }
-    .store-name { font-size: 1rem; font-weight: 700; }
-    .store-badge {
-      font-size: .72rem; font-weight: 600;
-      background: rgba(255,255,255,.2);
-      border: 1px solid rgba(255,255,255,.35);
-      border-radius: 12px; padding: 2px 10px;
-    }
-
-    /* ── 매장 테이블 ── */
-    .store-table { width: 100%; border-collapse: collapse; }
-    .store-table thead th {
-      font-size: .72rem; font-weight: 700;
-      letter-spacing: .03em;
-      padding: 8px 10px; text-align: center;
-      border-bottom: 1px solid var(--border);
-      color: var(--muted); background: #f8fafc;
-    }
-    .store-table thead th:nth-child(3) { text-align: left; }
-    .store-table thead th:nth-child(4),
-    .store-table thead th:nth-child(5) { text-align: right; }
-    .store-table tbody tr { border-bottom: 1px solid var(--border); transition: background .12s; }
-    .store-table tbody tr:last-child { border-bottom: none; }
-    .store-table tbody tr:hover { background: #f8faff; }
-    .store-table tbody tr.rank-1 { background: #fffbeb; }
-    .store-table tbody tr.rank-2 { background: #fafafa; }
-    .store-table tbody tr.rank-3 { background: #fff7ed; }
-    .store-table td { padding: 9px 10px; font-size: .82rem; vertical-align: middle; }
-    .store-table .rank-cell { width: 44px; }
-    .store-table .rank-num { width: 24px; height: 24px; font-size: .75rem; }
-    .store-table .img-cell { width: 50px; padding: 5px 6px !important; }
-    .store-table .prod-img { width: 40px; height: 40px; }
-    .store-table .prod-img-placeholder { width: 40px; height: 40px; font-size: 1rem; }
-    .store-table .sales-cell { font-size: .82rem; color: var(--store); font-weight: 700; }
-    .store-table .category-badge { font-size: .68rem; }
-
-    .empty-row td { text-align: center; color: var(--muted); font-size: .85rem; padding: 24px; }
+    .empty-row td { text-align: center; color: var(--muted); font-size: .85rem; padding: 32px; }
 
     /* ── 새로고침 버튼 ── */
     .refresh-btn {
-      position: fixed; bottom: 28px; right: 28px;
-      width: 52px; height: 52px; border-radius: 50%;
+      position: fixed; bottom: 24px; right: 24px;
+      width: 50px; height: 50px; border-radius: 50%;
       background: var(--primary); color: #fff;
       border: none; font-size: 1.3rem; cursor: pointer;
       box-shadow: rgba(26,35,126,.4) 0 4px 16px;
       display: none; align-items: center; justify-content: center;
       transition: transform .2s, box-shadow .2s;
+      z-index: 100;
     }
-    .refresh-btn:hover { transform: scale(1.1); box-shadow: rgba(26,35,126,.5) 0 6px 20px; }
+    .refresh-btn:hover { transform: scale(1.1); }
     .refresh-btn.spinning { animation: spin .7s linear infinite; }
 
+    /* ── 반응형 ── */
     @media (max-width: 640px) {
-      .stores-grid { grid-template-columns: 1fr; }
       .best-table .price-cell { display: none; }
       .best-table thead th:nth-child(5) { display: none; }
+      .site-header { top: 0; }
+      .main-tabs { top: 82px; }
+      .controls-bar { top: 131px; }
+      .store-picker { top: 175px; }
     }
   </style>
 </head>
 <body>
 
+<!-- ── 헤더 ── -->
 <header class="site-header">
   <h1>🏆 판매 베스트 대시보드</h1>
-  <div class="subtitle">전체 매장 · 18개 지점 주간 판매 현황</div>
+  <div class="subtitle">전체 매장 · 18개 지점 판매 현황</div>
   <div class="update-badge">
     <span>📅</span>
     <span id="updated-at">불러오는 중...</span>
   </div>
 </header>
 
+<!-- ── 메인 탭 ── -->
+<nav class="main-tabs">
+  <button class="tab-btn active" id="tab-overall" onclick="switchTab('overall')">🏠 전체 매장</button>
+  <button class="tab-btn"        id="tab-store"   onclick="switchTab('store')">🏪 매장별</button>
+</nav>
+
+<!-- ── 기간 선택 바 ── -->
+<div class="controls-bar">
+  <button class="period-btn active" id="btn-cumulative" onclick="switchMode('cumulative')">📊 26년 누적</button>
+  <button class="period-btn"        id="btn-weekly"     onclick="switchMode('weekly')">📅 주차별</button>
+  <select id="week-select" class="week-select" onchange="switchWeek(this.value)">
+    <option value="">주차 선택...</option>
+  </select>
+</div>
+
+<!-- ── 매장 선택 바 ── -->
+<div id="store-picker" class="store-picker"></div>
+
+<!-- ── 로딩 ── -->
 <div id="loading-screen">
   <div class="spinner"></div>
   <div class="loading-text">데이터를 불러오는 중입니다...</div>
 </div>
 
+<!-- ── 에러 ── -->
 <div id="error-screen">
   <div class="icon">⚠️</div>
   <h2>데이터를 불러올 수 없습니다</h2>
-  <p>
-    <code>index.html</code> 파일 상단의 <code>API_URL</code> 값을<br>
-    Apps Script 웹 앱 배포 URL로 교체해 주세요.
-  </p>
+  <p>API_URL을 확인하거나 Apps Script를 재배포해 주세요.</p>
   <code id="error-msg"></code>
 </div>
 
-<main id="main-content" class="main-content">
-  <!-- 전체 베스트 -->
-  <div class="overall-card">
-    <div class="section-title">
-      <span>🥇</span>
-      <span>전체 판매 베스트 TOP 20</span>
+<!-- ── 메인 콘텐츠 ── -->
+<main id="main-content">
+  <div class="table-card">
+    <div id="section-title-bar" class="section-title-bar">
+      <span id="section-icon">🥇</span>
+      <span id="section-title">전체 판매 베스트 TOP 20</span>
     </div>
-    <table class="best-table">
+    <table class="best-table" id="best-table">
       <thead>
         <tr>
           <th>순위</th>
@@ -321,48 +384,229 @@
           <th>분류</th>
           <th>제품명</th>
           <th>판매가</th>
-          <th>금주판매</th>
-          <th>💰 금주매출</th>
+          <th>판매수량</th>
+          <th>💰 판매금액</th>
         </tr>
       </thead>
-      <tbody id="overall-tbody"></tbody>
+      <tbody id="table-tbody"></tbody>
     </table>
   </div>
-
-  <!-- 매장별 베스트 -->
-  <div class="stores-section-header">
-    <div class="stores-section-title">
-      <span>🏪</span>
-      <span>매장별 판매 베스트 TOP 10</span>
-    </div>
-  </div>
-  <div id="stores-grid" class="stores-grid"></div>
 </main>
 
-<button class="refresh-btn" id="refresh-btn" onclick="loadData()" title="새로고침">↻</button>
+<!-- ── 새로고침 ── -->
+<button class="refresh-btn" id="refresh-btn" onclick="refresh()" title="새로고침">↻</button>
 
 <script>
   // ============================================================
-  //  ★ 여기에 Apps Script 웹 앱 배포 URL을 붙여넣으세요 ★
+  //  ★ Apps Script 웹 앱 배포 URL
   // ============================================================
   const API_URL = 'https://script.google.com/macros/s/AKfycbwLoh3VgIt2oXbgcGzBb-07dsgxSlkh7uLp3KDDXvpkH2BmPZcqXxe8BAmRPZIyfAI/exec';
 
-  // ── 매장별 헤더 색상 팔레트
-  const STORE_COLORS = [
-    '#1565c0','#2e7d32','#e65100','#6a1b9a','#00695c',
-    '#ad1457','#558b2f','#283593','#f57f17','#00838f',
-    '#4e342e','#37474f','#9e9d24','#bf360c','#4527a0',
-    '#01579b','#1b5e20','#ff8f00'
-  ];
+  // 매장 목록 및 색상
+  const STORES = ['남악','부천','의정부','인천','유성','여수','율하','충장',
+                  '동수원','송파','제주','괴정','강서','순천','평택','고척',
+                  '원주','마리오','창원'];
+  const STORE_COLORS = {
+    '남악':'#1565c0','부천':'#2e7d32','의정부':'#e65100','인천':'#6a1b9a',
+    '유성':'#00695c','여수':'#ad1457','율하':'#558b2f','충장':'#283593',
+    '동수원':'#f57f17','송파':'#00838f','제주':'#4e342e','괴정':'#37474f',
+    '강서':'#9e9d24','순천':'#bf360c','평택':'#4527a0','고척':'#01579b',
+    '원주':'#1b5e20','마리오':'#ff8f00','창원':'#0d47a1'
+  };
 
-  // ── 포맷 유틸 ──
+  // ── 숫자 포맷 ──
   const fmt = {
-    num  : n => n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ','),
+    num  : n => (n||0).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ','),
     price: n => n > 0 ? fmt.num(n) + '원' : '-',
     qty  : n => n > 0 ? fmt.num(n) + '개' : '-'
   };
 
-  // ── 순위 셀 렌더 ──
+  // ── 상태 ──
+  let state = {
+    tab   : 'overall',
+    mode  : 'cumulative',
+    week  : '',
+    store : STORES[0],
+    cache : {}
+  };
+
+  // ── 캐시 키 ──
+  function cacheKey() {
+    return state.mode === 'cumulative' ? 'cumulative' : 'weekly_' + state.week;
+  }
+
+  // ── 탭 전환 ──
+  function switchTab(tab) {
+    state.tab = tab;
+    document.getElementById('tab-overall').classList.toggle('active', tab === 'overall');
+    document.getElementById('tab-store').classList.toggle('active', tab === 'store');
+
+    const picker = document.getElementById('store-picker');
+    picker.classList.toggle('visible', tab === 'store');
+
+    const cached = state.cache[cacheKey()];
+    if (cached) renderContent(cached);
+  }
+
+  // ── 기간 모드 전환 ──
+  function switchMode(mode) {
+    state.mode = mode;
+    document.getElementById('btn-cumulative').classList.toggle('active', mode === 'cumulative');
+    document.getElementById('btn-weekly').classList.toggle('active', mode === 'weekly');
+
+    const sel = document.getElementById('week-select');
+    sel.style.display = mode === 'weekly' ? 'inline-block' : 'none';
+
+    if (mode === 'weekly' && !state.week) {
+      // 아직 주차 미선택 → 첫 번째 항목 자동 선택
+      if (sel.options.length > 1) {
+        sel.selectedIndex = 1;
+        state.week = sel.value;
+      } else {
+        return; // 주차 목록 없음
+      }
+    }
+
+    loadData();
+  }
+
+  // ── 주차 선택 ──
+  function switchWeek(week) {
+    state.week = week;
+    if (week) loadData();
+  }
+
+  // ── 매장 선택 ──
+  function switchStore(name) {
+    state.store = name;
+    document.querySelectorAll('.store-pill').forEach(el => {
+      const active = el.dataset.store === name;
+      el.classList.toggle('active', active);
+      if (active) el.style.background = STORE_COLORS[name] || '#1565c0';
+      else el.style.background = '';
+    });
+    const cached = state.cache[cacheKey()];
+    if (cached) renderContent(cached);
+  }
+
+  // ── 데이터 로드 ──
+  async function loadData() {
+    const key = cacheKey();
+    if (state.cache[key]) {
+      renderContent(state.cache[key]);
+      return;
+    }
+
+    showLoading();
+
+    const btn = document.getElementById('refresh-btn');
+    btn.classList.add('spinning');
+
+    try {
+      let url = API_URL;
+      if (state.mode === 'cumulative') {
+        url += (url.includes('?') ? '&' : '?') + 'mode=cumulative';
+      } else if (state.week) {
+        url += (url.includes('?') ? '&' : '?') + 'mode=weekly&period=' + encodeURIComponent(state.week);
+      }
+
+      const res = await fetch(url);
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+
+      state.cache[key] = data;
+
+      // 업데이트 시각
+      if (data.updatedAt) {
+        document.getElementById('updated-at').textContent = data.updatedAt + ' 업데이트';
+      }
+
+      // 주차 드롭다운 최초 1회 채우기
+      const sel = document.getElementById('week-select');
+      if (data.periods && data.periods.length > 0 && sel.options.length <= 1) {
+        data.periods.forEach(p => {
+          const opt = document.createElement('option');
+          opt.value = p.value;
+          opt.textContent = p.label;
+          sel.appendChild(opt);
+        });
+      }
+
+      renderContent(data);
+    } catch (err) {
+      showError(err.message);
+    } finally {
+      btn.classList.remove('spinning');
+    }
+  }
+
+  // ── 콘텐츠 렌더 ──
+  function renderContent(data) {
+    const periodLabel = state.mode === 'cumulative'
+      ? '26년 누적'
+      : (state.week ? state.week.replace(/(\d+)월(\d+)주/, '$1월 $2주차') : '');
+
+    if (state.tab === 'overall') {
+      const items = data.overall || [];
+      renderTable(items, false, periodLabel);
+    } else {
+      const storeData = (data.stores || []).find(s => s.name === state.store);
+      const items = storeData ? (storeData.products || []) : [];
+      renderTable(items, true, periodLabel);
+    }
+
+    showContent();
+  }
+
+  // ── 테이블 렌더 ──
+  function renderTable(items, isStore, periodLabel) {
+    const tbody = document.getElementById('table-tbody');
+    const titleBar = document.getElementById('section-title-bar');
+    const icon = document.getElementById('section-icon');
+    const title = document.getElementById('section-title');
+    const table = document.getElementById('best-table');
+
+    const topN = isStore ? 10 : 20;
+
+    // 타이틀 업데이트
+    if (isStore) {
+      titleBar.className = 'section-title-bar store-style';
+      icon.textContent = '🏪';
+      title.textContent = state.store + '  TOP ' + topN + (periodLabel ? '  ·  ' + periodLabel : '');
+      table.className = 'best-table store-style';
+      titleBar.style.background = STORE_COLORS[state.store] || '#1565c0';
+      // 판매금액 셀 색상
+      document.querySelectorAll('.sales-cell').forEach(c => c.classList.add('store-style'));
+    } else {
+      titleBar.className = 'section-title-bar';
+      titleBar.style.background = '';
+      icon.textContent = '🥇';
+      title.textContent = '전체 판매 베스트  TOP ' + topN + (periodLabel ? '  ·  ' + periodLabel : '');
+      table.className = 'best-table';
+    }
+
+    if (!items || items.length === 0) {
+      tbody.innerHTML = '<tr class="empty-row"><td colspan="7">데이터가 없습니다.</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = items.slice(0, topN).map((item, idx) => {
+      const rank = idx + 1;
+      const rankClass = rank <= 3 ? 'rank-' + rank : '';
+      return `<tr class="${rankClass}">
+        ${rankCell(rank)}
+        ${imgCell(item.i)}
+        <td class="category-cell"><span class="category-badge">${item.c || '-'}</span></td>
+        <td class="name-cell">${item.n || '-'}</td>
+        <td class="price-cell">${fmt.price(item.p || 0)}</td>
+        <td class="qty-cell">${fmt.qty(item.q || 0)}</td>
+        <td class="sales-cell${isStore ? ' store-style' : ''}">${fmt.price(item.s || 0)}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  // ── 순위 셀 ──
   function rankCell(rank) {
     const medals = ['🥇','🥈','🥉'];
     const inner = rank <= 3
@@ -371,133 +615,60 @@
     return `<td class="rank-cell">${inner}</td>`;
   }
 
-  // ── 이미지 셀 렌더 ──
-  function imgCell(imgUrl) {
-    if (!imgUrl) {
-      return `<td class="img-cell"><div class="prod-img-placeholder">📦</div></td>`;
-    }
+  // ── 이미지 셀 ──
+  function imgCell(url) {
+    if (!url) return `<td class="img-cell"><div class="prod-img-placeholder">📦</div></td>`;
     return `<td class="img-cell">
-      <img class="prod-img" src="${imgUrl}" alt="상품이미지" loading="lazy"
+      <img class="prod-img" src="${url}" alt="상품이미지" loading="lazy"
         onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'prod-img-placeholder',textContent:'📦'}))">
     </td>`;
   }
 
-  // ── 전체 베스트 TOP 20 렌더 ──
-  // API 필드: i=이미지, c=분류, n=제품명, p=판매가, q=판매수, s=매출
-  function renderOverall(items) {
-    const maxRevenue = Math.max(...items.map(x => x.s || 0));
-    const tbody = document.getElementById('overall-tbody');
-    tbody.innerHTML = items.map((item, idx) => {
-      const rank = idx + 1;
-      const barWidth = maxRevenue > 0 ? Math.round((item.s / maxRevenue) * 80) : 0;
-      return `<tr class="rank-${rank}">
-        ${rankCell(rank)}
-        ${imgCell(item.i)}
-        <td class="category-cell"><span class="category-badge">${item.c || '-'}</span></td>
-        <td class="name-cell">${item.n || '-'}</td>
-        <td class="price-cell">${fmt.price(item.p || 0)}</td>
-        <td class="qty-cell">${fmt.qty(item.q || 0)}</td>
-        <td class="sales-cell">
-          <div class="sales-bar-wrap">
-            <div class="sales-bar" style="width:${barWidth}px"></div>
-            <span class="sales-num">${fmt.price(item.s || 0)}</span>
-          </div>
-        </td>
-      </tr>`;
-    }).join('');
-  }
-
-  // ── 매장별 베스트 TOP 10 렌더 ──
-  // API 필드: store.products = 상품 배열
-  function renderStores(stores) {
-    const grid = document.getElementById('stores-grid');
-    grid.innerHTML = stores.map((store, si) => {
-      const color = store.color || STORE_COLORS[si % STORE_COLORS.length];
-      const rows = store.products && store.products.length > 0
-        ? store.products.map((item, idx) => {
-            const rank = idx + 1;
-            return `<tr class="rank-${rank}">
-              ${rankCell(rank)}
-              ${imgCell(item.i)}
-              <td class="name-cell">${item.n || '-'}</td>
-              <td class="qty-cell">${fmt.qty(item.q || 0)}</td>
-              <td class="sales-cell">${fmt.price(item.s || 0)}</td>
-            </tr>`;
-          }).join('')
-        : `<tr class="empty-row"><td colspan="5">판매 데이터 없음</td></tr>`;
-
-      return `<div class="store-card">
-        <div class="store-header" style="background:${color}">
-          <div class="store-name">🏪 ${store.name}</div>
-          <span class="store-badge">TOP 10</span>
-        </div>
-        <table class="store-table">
-          <thead>
-            <tr>
-              <th>순위</th><th>이미지</th><th>제품명</th><th>판매수</th><th>💰 매출</th>
-            </tr>
-          </thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>`;
-    }).join('');
-  }
-
-  // ── 에러 표시 ──
-  function showError(msg) {
-    document.getElementById('loading-screen').style.display = 'none';
-    const err = document.getElementById('error-screen');
-    err.style.display = 'flex';
-    document.getElementById('error-msg').textContent = msg || '';
-  }
-
-  // ── 데이터 로드 ──
-  async function loadData() {
-    if (!API_URL || API_URL === 'YOUR_APPS_SCRIPT_URL_HERE') {
-      showError('index.html 파일 상단의 API_URL 값을 Apps Script 웹 앱 배포 URL로 교체해 주세요.');
-      return;
-    }
-
-    // 새로고침 버튼 스피닝 처리
-    const btn = document.getElementById('refresh-btn');
-    btn.classList.add('spinning');
-
+  // ── UI 상태 ──
+  function showLoading() {
     document.getElementById('loading-screen').style.display = 'flex';
     document.getElementById('error-screen').style.display = 'none';
     document.getElementById('main-content').style.display = 'none';
-
-    try {
-      const res = await fetch(API_URL);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-
-      // 업데이트 시각
-      if (data.updatedAt) {
-        document.getElementById('updated-at').textContent = data.updatedAt + ' 업데이트';
-      }
-
-      // 전체 베스트
-      if (data.overall && data.overall.length) {
-        renderOverall(data.overall.slice(0, 20));
-      }
-
-      // 매장별 베스트
-      if (data.stores && data.stores.length) {
-        renderStores(data.stores);
-      }
-
-      document.getElementById('loading-screen').style.display = 'none';
-      document.getElementById('main-content').style.display = 'block';
-      btn.style.display = 'flex';
-    } catch (e) {
-      showError(e.message);
-    } finally {
-      btn.classList.remove('spinning');
-    }
+    document.getElementById('refresh-btn').style.display = 'none';
+  }
+  function showContent() {
+    document.getElementById('loading-screen').style.display = 'none';
+    document.getElementById('error-screen').style.display = 'none';
+    document.getElementById('main-content').style.display = 'block';
+    document.getElementById('refresh-btn').style.display = 'flex';
+  }
+  function showError(msg) {
+    document.getElementById('loading-screen').style.display = 'none';
+    document.getElementById('error-screen').style.display = 'flex';
+    document.getElementById('main-content').style.display = 'none';
+    document.getElementById('error-msg').textContent = msg || '';
   }
 
-  // 페이지 로드 시 자동 실행
-  loadData();
+  // ── 새로고침 ──
+  function refresh() {
+    const key = cacheKey();
+    delete state.cache[key];
+    loadData();
+  }
+
+  // ── 초기화 ──
+  function init() {
+    // 매장 선택 버튼 생성
+    const picker = document.getElementById('store-picker');
+    STORES.forEach(name => {
+      const btn = document.createElement('button');
+      btn.className = 'store-pill' + (name === state.store ? ' active' : '');
+      btn.dataset.store = name;
+      btn.textContent = '🏪 ' + name;
+      if (name === state.store) btn.style.background = STORE_COLORS[name] || '#1565c0';
+      btn.onclick = () => switchStore(name);
+      picker.appendChild(btn);
+    });
+
+    loadData();
+  }
+
+  init();
 </script>
 </body>
 </html>
