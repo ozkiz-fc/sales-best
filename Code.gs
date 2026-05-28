@@ -6,12 +6,15 @@
    E(4)=소분류&시즌  F(5)=시즌  G(6)=상품명  H(7)=원가
    I(8)=판매가  J(9)=대표바코드
    K(10)=26년누적판매수량  L(11)=26년누적판매금액   ← 각 매장 누적
-   M(12)=1월낮판매수량  N(13)=1월낮판매금액
+   M(12)=1월실판매수량  N(13)=1월낮판매금액
    O(14)=W1수량  P(15)=W1금액
    Q(16)=2주수량  R(17)=2주매출  ...
 
    26'PP 시트:
    U(20)=전체누적판매수량  V(21)=전체누적판매금액
+
+   상품리스트 시트:
+   A(0)=상품명  H(7)=대표이미지URL
    =========================================================== */
 
 const STORE_NAMES = [
@@ -37,7 +40,53 @@ const COL_CUM_REV = 11; // L: 매장별 26년 누적 판매금액
 const COL_OV_QTY  = 20; // U: 26'PP 전체 누적 판매수량
 const COL_OV_REV  = 21; // V: 26'PP 전체 누적 판매금액
 
-const OVERALL_SHEET = "26'PP"; // 전체 누적 시트명
+const OVERALL_SHEET    = "26'PP";      // 전체 누적 시트명
+const IMAGE_SHEET_NAME = '상품리스트'; // 이미지 URL 참조 시트
+
+// ── 이미지 URL 조회 테이블 로드 ──────────────────────────
+// 상품리스트 시트의 A열(상품명) → H열(대표이미지URL) 매핑 반환
+function loadImageMap(ss) {
+  const map   = {};
+  const sheet = ss.getSheetByName(IMAGE_SHEET_NAME);
+  if (!sheet) return map;
+
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return map;
+
+  // 헤더(1행) 건너뜀, A~H열(8컬럼)만 읽기
+  const data = sheet.getRange(2, 1, lastRow - 1, 8).getValues();
+  data.forEach(row => {
+    const name = String(row[0] || '').trim();          // A열: 상품명
+    const url  = String(row[7] || '').trim();          // H열: 대표이미지
+    if (name && url && url.startsWith('http')) {
+      map[name] = url;
+    }
+  });
+  return map;
+}
+
+// ── 헤더 구조 확인 (1회 실행 함수) ──────────────────────
+/**
+ * 첫 번째 매장 시트의 1~2행 헤더 전체를 출력합니다.
+ */
+function debugHeaders() {
+  const ss    = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(STORE_NAMES[0]);
+  if (!sheet) { Logger.log('시트 없음'); return; }
+
+  const lastCol = sheet.getLastColumn();
+  Logger.log('총 열: ' + lastCol);
+
+  for (let hRow = 1; hRow <= 2; hRow++) {
+    const headers = sheet.getRange(hRow, 1, 1, lastCol).getValues()[0];
+    // 비어있지 않은 헤더만 출력
+    headers.forEach((h, i) => {
+      if (String(h || '').trim()) {
+        Logger.log('행' + hRow + ' [' + i + '] = "' + String(h).replace(/\n/g, '\\n') + '"');
+      }
+    });
+  }
+}
 
 // ── 진입점 ────────────────────────────────────────────────
 function doGet(e) {
@@ -46,16 +95,16 @@ function doGet(e) {
     const mode   = p.mode   || 'weekly';
     const period = p.period || 'current';
 
-    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const ss     = SpreadsheetApp.getActiveSpreadsheet();
+    const imgMap = loadImageMap(ss); // 상품리스트에서 이미지 URL 로드
+
     let overall = [], stores = [];
 
     if (mode === 'cumulative') {
       // ── 26년 누적 모드 ──
-      // 전체: 26'PP 시트 U열/V열
       const ppSheet = ss.getSheetByName(OVERALL_SHEET);
-      overall = ppSheet ? readCumulativeSheet(ppSheet, COL_OV_QTY, COL_OV_REV, 20) : [];
+      overall = ppSheet ? readCumulativeSheet(ppSheet, COL_OV_QTY, COL_OV_REV, 22) : [];
 
-      // 매장별: 각 매장 시트 K열/L열 (12컬럼만 읽어 속도 개선)
       STORE_NAMES.forEach(name => {
         try {
           const sheet = ss.getSheetByName(name);
@@ -84,6 +133,11 @@ function doGet(e) {
       stores  = allStore.map(s => ({ name: s.name, color: s.color, products: s.products.slice(0, 10) }));
     }
 
+    // ── 이미지 URL 적용 (상품리스트 매핑) ──
+    const applyImg = prod => { prod.i = imgMap[prod.n] || ''; return prod; };
+    overall = overall.map(applyImg);
+    stores  = stores.map(s => ({ ...s, products: s.products.map(applyImg) }));
+
     const periods = buildPeriodList(ss);
 
     const result = {
@@ -103,8 +157,6 @@ function doGet(e) {
 }
 
 // ── 누적 시트 읽기 ────────────────────────────────────────
-// qtyCol, revCol: 0-based 컬럼 인덱스
-// maxReadCols: 읽을 최대 컬럼 수 (속도 최적화)
 function readCumulativeSheet(sheet, qtyCol, revCol, maxReadCols) {
   const lastRow = sheet.getLastRow();
   if (lastRow < 3) return [];
@@ -140,12 +192,16 @@ function readStoreWeekly(sheet, period) {
   if (lastRow < 3) return [];
 
   const lastCol = sheet.getLastColumn();
-  const headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
 
-  const cols = findPeriodColumns(headers, period);
+  // 헤더 행 1, 2 모두 시도 (한국 시트는 2행 헤더인 경우 많음)
+  let cols = null;
+  for (let hRow = 1; hRow <= 2 && !cols; hRow++) {
+    if (lastRow < hRow) break;
+    const headers = sheet.getRange(hRow, 1, 1, lastCol).getValues()[0];
+    cols = findPeriodColumns(headers, period);
+  }
   if (!cols) return [];
 
-  // 필요한 컬럼까지만 읽어 속도 개선
   const readCols = Math.max(cols.qty, cols.rev, COL_NAME, COL_PRICE) + 1;
   const rows = sheet.getRange(3, 1, lastRow - 2, Math.min(readCols, lastCol)).getValues();
 
@@ -182,7 +238,6 @@ function findPeriodColumns(headers, period) {
     const qty = findCol(headers, '금주판매');
     const rev = findCol(headers, '금주매출');
     if (qty >= 0 && rev >= 0) return { qty, rev };
-    // 금주 컬럼 없으면 K/L(누적) 사용
     return { qty: COL_CUM_QTY, rev: COL_CUM_REV };
   }
 
@@ -194,11 +249,10 @@ function findPeriodColumns(headers, period) {
 
   const anchor = headers.findIndex(h =>
     String(h || '').includes(monthNum + '월') &&
-    String(h || '').includes('낮판매수량')
+    String(h || '').includes('실판매수량')
   );
   if (anchor < 0) return null;
 
-  // anchor+2 = W1수량/금액, anchor+4 = 2주수량/금액 ...
   const offset = weekNum * 2;
   return { qty: anchor + offset, rev: anchor + offset + 1 };
 }
@@ -221,33 +275,37 @@ function aggregate(allStore, topN) {
 
 // ── 주차 목록 생성 ────────────────────────────────────────
 function buildPeriodList(ss) {
-  // 여러 매장 시트에서 "N월 낮판매수량" 헤더를 찾아 주차 목록 생성
   for (const storeName of STORE_NAMES) {
     const sheet = ss.getSheetByName(storeName);
     if (!sheet) continue;
 
     const lastCol = sheet.getLastColumn();
-    if (lastCol < 14) continue; // 주차 컬럼이 없으면 건너뜀
+    if (lastCol < 14) continue;
 
-    const headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
-    const periods = [];
+    const lastRow = sheet.getLastRow();
 
-    for (let m = 1; m <= 12; m++) {
-      const anchor = headers.findIndex(h =>
-        String(h || '').includes(m + '월') && String(h || '').includes('낮판매수량')
-      );
-      if (anchor < 0) continue;
+    // 헤더 행 1, 2 모두 시도
+    for (let hRow = 1; hRow <= 2; hRow++) {
+      if (lastRow < hRow) continue;
+      const headers = sheet.getRange(hRow, 1, 1, lastCol).getValues()[0];
+      const periods = [];
 
-      for (let w = 1; w <= 6; w++) {
-        const qIdx = anchor + w * 2;
-        if (qIdx >= lastCol) break;
-        // 다음 달 앵커면 중단
-        if (String(headers[qIdx] || '').includes('낮판매수량')) break;
-        periods.push({ label: m + '월 ' + w + '주차', value: m + '월' + w + '주' });
+      for (let m = 1; m <= 12; m++) {
+        const anchor = headers.findIndex(h =>
+          String(h || '').includes(m + '월') && String(h || '').includes('실판매수량')
+        );
+        if (anchor < 0) continue;
+
+        for (let w = 1; w <= 6; w++) {
+          const qIdx = anchor + w * 2;
+          if (qIdx >= lastCol) break;
+          if (String(headers[qIdx] || '').includes('실판매수량')) break;
+          periods.push({ label: m + '월 ' + w + '주차', value: m + '월' + w + '주' });
+        }
       }
-    }
 
-    if (periods.length > 0) return periods;
+      if (periods.length > 0) return periods;
+    }
   }
   return [];
 }
