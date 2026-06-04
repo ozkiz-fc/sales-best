@@ -110,7 +110,13 @@
     }
     .period-btn:hover:not(.active) { border-color: var(--accent); color: var(--accent); }
 
-    .week-select {
+    .date-range-wrap {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-left: auto;
+    }
+    .date-input {
       padding: 5px 10px;
       border-radius: 8px;
       border: 1.5px solid var(--border);
@@ -118,9 +124,9 @@
       color: var(--text);
       background: #fff;
       cursor: pointer;
-      display: none;
     }
-    .week-select:focus { outline: none; border-color: var(--accent); }
+    .date-input:focus { outline: none; border-color: var(--accent); }
+    .date-sep { color: var(--muted); font-size: .85rem; font-weight: 600; }
 
     /* ── 매장 선택 바 ── */
     .store-picker {
@@ -344,26 +350,20 @@
 
 <!-- ── 기간 선택 바 ── -->
 <div class="controls-bar">
-  <button class="period-btn active" id="btn-cumulative" onclick="switchMode('cumulative')">📊 26년 누적</button>
-  <button class="period-btn"        id="btn-weekly"     onclick="switchMode('weekly')">📅 주차별</button>
-  <select id="week-select" class="week-select" onchange="switchWeek(this.value)">
-    <option value="">주차 선택...</option>
-  </select>
+  <button class="period-btn active" id="btn-today"     onclick="setQuickPeriod('today')">오늘</button>
+  <button class="period-btn"        id="btn-week"      onclick="setQuickPeriod('week')">금주</button>
+  <button class="period-btn"        id="btn-lastweek"  onclick="setQuickPeriod('lastweek')">전주</button>
+  <button class="period-btn"        id="btn-month"     onclick="setQuickPeriod('month')">이번달</button>
+  <button class="period-btn"        id="btn-lastmonth" onclick="setQuickPeriod('lastmonth')">전월</button>
+  <div class="date-range-wrap">
+    <input type="date" id="date-start" class="date-input" onchange="onDateChange()">
+    <span class="date-sep">~</span>
+    <input type="date" id="date-end" class="date-input" onchange="onDateChange()">
+  </div>
 </div>
 
 <!-- ── 매장 선택 바 ── -->
 <div id="store-picker" class="store-picker"></div>
-
-<!-- ── 주차 데이터 없음 안내 ── -->
-<div id="no-periods-notice" style="display:none; align-items:center; gap:12px; background:#fff8e1; border:1.5px solid #f9a825; border-radius:10px; padding:14px 20px; margin:16px 16px 0; font-size:.88rem; color:#5d4037; max-width:1200px; margin-left:auto; margin-right:auto;">
-  <span style="font-size:1.4rem">⚠️</span>
-  <div>
-    <strong>주차별 데이터를 불러올 수 없습니다.</strong><br>
-    <span style="color:#795548">
-      시트에서 주차별 헤더(예: <code style="background:#fef3c7;padding:1px 5px;border-radius:4px">1월낮판매수량</code>)를 찾지 못했습니다. 잠시 후 다시 시도해 주세요.
-    </span>
-  </div>
-</div>
 
 <!-- ── 로딩 ── -->
 <div id="loading-screen">
@@ -412,7 +412,6 @@
   // ============================================================
   const API_URL = 'https://script.google.com/macros/s/AKfycbwLoh3VgIt2oXbgcGzBb-07dsgxSlkh7uLp3KDDXvpkH2BmPZcqXxe8BAmRPZIyfAI/exec';
 
-  // 매장 목록 및 색상
   const STORES = ['남악','부천','의정부','인천','유성','여수','율하','충장',
                   '동수원','송파','제주','괴정','강서','순천','평택','고척',
                   '원주','마리오','창원'];
@@ -424,27 +423,71 @@
     '원주':'#1b5e20','마리오':'#ff8f00','창원':'#0d47a1'
   };
 
-  // ── 숫자 포맷 ──
   const fmt = {
     num  : n => (n||0).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ','),
     price: n => n > 0 ? fmt.num(n) + '원' : '-',
     qty  : n => n > 0 ? fmt.num(n) + '개' : '-'
   };
 
-  // ── 상태 ──
-  let state = {
-    tab   : 'overall',
-    mode  : 'cumulative',
-    week  : '',
-    store : STORES[0],
-    cache : {}
-  };
+  let state = { tab: 'overall', startDate: '', endDate: '', store: STORES[0], cache: {} };
 
-  // ── 캐시 키 ──
-  function cacheKey() {
-    if (state.mode === 'cumulative') return 'cumulative';
-    if (state.week) return 'weekly_' + state.week;
-    return null; // 주차 미선택 시 캐시 없음
+  // ── 날짜 유틸 ──
+  function toYMD(d) {
+    return d.getFullYear() + '-' +
+           String(d.getMonth()+1).padStart(2,'0') + '-' +
+           String(d.getDate()).padStart(2,'0');
+  }
+  function getMonday(d) {
+    const day = d.getDay();
+    const diff = day === 0 ? -6 : 1 - day;
+    const mon = new Date(d);
+    mon.setDate(d.getDate() + diff);
+    return mon;
+  }
+
+  // ── 빠른 기간 설정 ──
+  function setQuickPeriod(type) {
+    const today = new Date();
+    let start = today, end = today;
+
+    if (type === 'week') {
+      start = getMonday(today);
+    } else if (type === 'lastweek') {
+      const mon = getMonday(today);
+      end   = new Date(mon); end.setDate(mon.getDate() - 1);
+      start = new Date(end); start.setDate(end.getDate() - 6);
+    } else if (type === 'month') {
+      start = new Date(today.getFullYear(), today.getMonth(), 1);
+    } else if (type === 'lastmonth') {
+      const first = new Date(today.getFullYear(), today.getMonth(), 1);
+      end   = new Date(first); end.setDate(first.getDate() - 1);
+      start = new Date(end.getFullYear(), end.getMonth(), 1);
+    }
+
+    state.startDate = toYMD(start);
+    state.endDate   = toYMD(end);
+    document.getElementById('date-start').value = state.startDate;
+    document.getElementById('date-end').value   = state.endDate;
+
+    ['today','week','lastweek','month','lastmonth'].forEach(t =>
+      document.getElementById('btn-' + t).classList.toggle('active', t === type)
+    );
+    state.cache = {};
+    loadData();
+  }
+
+  // ── 날짜 직접 변경 ──
+  function onDateChange() {
+    const s = document.getElementById('date-start').value;
+    const e = document.getElementById('date-end').value;
+    if (!s || !e || s > e) return;
+    ['today','week','lastweek','month','lastmonth'].forEach(t =>
+      document.getElementById('btn-' + t).classList.remove('active')
+    );
+    state.startDate = s;
+    state.endDate   = e;
+    state.cache = {};
+    loadData();
   }
 
   // ── 탭 전환 ──
@@ -452,39 +495,9 @@
     state.tab = tab;
     document.getElementById('tab-overall').classList.toggle('active', tab === 'overall');
     document.getElementById('tab-store').classList.toggle('active', tab === 'store');
-
-    const picker = document.getElementById('store-picker');
-    picker.classList.toggle('visible', tab === 'store');
-
-    const cached = state.cache[cacheKey()];
+    document.getElementById('store-picker').classList.toggle('visible', tab === 'store');
+    const cached = state.cache[state.startDate + '_' + state.endDate];
     if (cached) renderContent(cached);
-  }
-
-  // ── 기간 모드 전환 ──
-  function switchMode(mode) {
-    state.mode = mode;
-    document.getElementById('btn-cumulative').classList.toggle('active', mode === 'cumulative');
-    document.getElementById('btn-weekly').classList.toggle('active', mode === 'weekly');
-
-    const sel = document.getElementById('week-select');
-    sel.style.display = mode === 'weekly' ? 'inline-block' : 'none';
-    document.getElementById('no-periods-notice').style.display = 'none';
-
-    if (mode === 'weekly' && sel.options.length > 1) {
-      // 주차 목록 이미 있으면 첫 번째 선택
-      if (!state.week) {
-        sel.selectedIndex = 1;
-        state.week = sel.value;
-      }
-    }
-    // 주차 목록 없어도 loadData() 호출 → 데이터 로드 후 자동 처리
-    loadData();
-  }
-
-  // ── 주차 선택 ──
-  function switchWeek(week) {
-    state.week = week;
-    if (week) loadData();
   }
 
   // ── 매장 선택 ──
@@ -493,134 +506,88 @@
     document.querySelectorAll('.store-pill').forEach(el => {
       const active = el.dataset.store === name;
       el.classList.toggle('active', active);
-      if (active) el.style.background = STORE_COLORS[name] || '#1565c0';
-      else el.style.background = '';
+      el.style.background = active ? (STORE_COLORS[name] || '#1565c0') : '';
     });
-    const cached = state.cache[cacheKey()];
+    const cached = state.cache[state.startDate + '_' + state.endDate];
     if (cached) renderContent(cached);
   }
 
   // ── 데이터 로드 ──
   async function loadData() {
-    const key = cacheKey();
-    if (key && state.cache[key]) {
-      renderContent(state.cache[key]);
-      return;
-    }
+    const key = state.startDate + '_' + state.endDate;
+    if (state.cache[key]) { renderContent(state.cache[key]); return; }
 
     showLoading();
-
-    const btn = document.getElementById('refresh-btn');
-    btn.classList.add('spinning');
+    document.getElementById('refresh-btn').classList.add('spinning');
 
     try {
-      let url = API_URL;
-      if (state.mode === 'cumulative') {
-        url += (url.includes('?') ? '&' : '?') + 'mode=cumulative';
-      } else if (state.week) {
-        url += (url.includes('?') ? '&' : '?') + 'mode=weekly&period=' + encodeURIComponent(state.week);
-      }
-
-      const res = await fetch(url);
+      const url = API_URL + '?startDate=' + state.startDate + '&endDate=' + state.endDate;
+      const res  = await fetch(url);
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const data = await res.json();
-      if (data.error) throw new Error(data.error);
 
-      if (key) state.cache[key] = data;
-
-      // 업데이트 시각
-      if (data.updatedAt) {
-        document.getElementById('updated-at').textContent = data.updatedAt + ' 업데이트';
-      }
-
-      // 주차 드롭다운 최초 1회 채우기
-      const sel = document.getElementById('week-select');
-      const wasEmpty = sel.options.length <= 1;
-      if (data.periods && data.periods.length > 0 && wasEmpty) {
-        data.periods.forEach(p => {
-          const opt = document.createElement('option');
-          opt.value = p.value;
-          opt.textContent = p.label;
-          sel.appendChild(opt);
-        });
-        // 주차별 모드인데 주차가 아직 미선택 → 첫 번째 자동 선택 후 재요청
-        if (state.mode === 'weekly' && !state.week) {
-          sel.selectedIndex = 1;
-          state.week = sel.value;
-          loadData();
-          return;
-        }
-      }
-
-      // 주차별인데 periods가 없으면 안내 표시
-      if (state.mode === 'weekly' && sel.options.length <= 1) {
-        document.getElementById('no-periods-notice').style.display = 'flex';
-        showContent();
+      if (data.error === 'session_expired') {
+        showError('이지어드민 세션이 만료됐습니다.\nApps Script 스크립트 속성에서 PHPSESSID를 갱신해 주세요.');
         return;
       }
+      if (data.error) throw new Error(data.error);
 
+      state.cache[key] = data;
+      if (data.updatedAt) document.getElementById('updated-at').textContent = data.updatedAt + ' 업데이트';
       renderContent(data);
-    } catch (err) {
+    } catch(err) {
       showError(err.message);
     } finally {
-      btn.classList.remove('spinning');
+      document.getElementById('refresh-btn').classList.remove('spinning');
     }
   }
 
   // ── 콘텐츠 렌더 ──
   function renderContent(data) {
-    const periodLabel = state.mode === 'cumulative'
-      ? '26년 누적'
-      : (state.week ? state.week.replace(/(\d+)월(\d+)주/, '$1월 $2주차') : '');
+    const label = state.startDate === state.endDate
+      ? state.startDate
+      : state.startDate + ' ~ ' + state.endDate;
 
     if (state.tab === 'overall') {
-      const items = data.overall || [];
-      renderTable(items, false, periodLabel);
+      renderTable(data.overall || [], false, label);
     } else {
-      const storeData = (data.stores || []).find(s => s.name === state.store);
-      const items = storeData ? (storeData.products || []) : [];
-      renderTable(items, true, periodLabel);
+      const sd = (data.stores || []).find(s => s.name === state.store);
+      renderTable(sd ? (sd.products || []) : [], true, label);
     }
-
     showContent();
   }
 
   // ── 테이블 렌더 ──
-  function renderTable(items, isStore, periodLabel) {
-    const tbody = document.getElementById('table-tbody');
+  function renderTable(items, isStore, label) {
+    const tbody    = document.getElementById('table-tbody');
     const titleBar = document.getElementById('section-title-bar');
-    const icon = document.getElementById('section-icon');
-    const title = document.getElementById('section-title');
-    const table = document.getElementById('best-table');
+    const icon     = document.getElementById('section-icon');
+    const title    = document.getElementById('section-title');
+    const table    = document.getElementById('best-table');
+    const topN     = isStore ? 10 : 20;
 
-    const topN = isStore ? 10 : 20;
-
-    // 타이틀 업데이트
     if (isStore) {
       titleBar.className = 'section-title-bar store-style';
-      icon.textContent = '🏪';
-      title.textContent = state.store + '  TOP ' + topN + (periodLabel ? '  ·  ' + periodLabel : '');
-      table.className = 'best-table store-style';
       titleBar.style.background = STORE_COLORS[state.store] || '#1565c0';
-      // 판매금액 셀 색상
-      document.querySelectorAll('.sales-cell').forEach(c => c.classList.add('store-style'));
+      icon.textContent  = '🏪';
+      title.textContent = state.store + '  TOP ' + topN + '  ·  ' + label;
+      table.className   = 'best-table store-style';
     } else {
-      titleBar.className = 'section-title-bar';
+      titleBar.className    = 'section-title-bar';
       titleBar.style.background = '';
-      icon.textContent = '🥇';
-      title.textContent = '전체 판매 베스트  TOP ' + topN + (periodLabel ? '  ·  ' + periodLabel : '');
-      table.className = 'best-table';
+      icon.textContent  = '🥇';
+      title.textContent = '전체 판매 베스트  TOP ' + topN + '  ·  ' + label;
+      table.className   = 'best-table';
     }
 
     if (!items || items.length === 0) {
-      tbody.innerHTML = '<tr class="empty-row"><td colspan="7">데이터가 없습니다.</td></tr>';
+      tbody.innerHTML = '<tr class="empty-row"><td colspan="7">해당 기간에 데이터가 없습니다.</td></tr>';
       return;
     }
 
     tbody.innerHTML = items.slice(0, topN).map((item, idx) => {
       const rank = idx + 1;
-      const rankClass = rank <= 3 ? 'rank-' + rank : '';
-      return `<tr class="${rankClass}">
+      return `<tr class="${rank <= 3 ? 'rank-' + rank : ''}">
         ${rankCell(rank)}
         ${imgCell(item.i)}
         <td class="category-cell"><span class="category-badge">${item.c || '-'}</span></td>
@@ -632,66 +599,54 @@
     }).join('');
   }
 
-  // ── 순위 셀 ──
   function rankCell(rank) {
     const medals = ['🥇','🥈','🥉'];
-    const inner = rank <= 3
-      ? `<span class="rank-medal">${medals[rank-1]}</span>`
-      : `<span class="rank-num">${rank}</span>`;
+    const inner  = rank <= 3 ? `<span class="rank-medal">${medals[rank-1]}</span>` : `<span class="rank-num">${rank}</span>`;
     return `<td class="rank-cell">${inner}</td>`;
   }
 
-  // ── 이미지 셀 ──
   function imgCell(url) {
     if (!url) return `<td class="img-cell"><div class="prod-img-placeholder">📦</div></td>`;
-    return `<td class="img-cell">
-      <img class="prod-img" src="${url}" alt="상품이미지" loading="lazy"
-        onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'prod-img-placeholder',textContent:'📦'}))">
-    </td>`;
+    return `<td class="img-cell"><img class="prod-img" src="${url}" alt="상품이미지" loading="lazy"
+      onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'prod-img-placeholder',textContent:'📦'}))"></td>`;
   }
 
-  // ── UI 상태 ──
   function showLoading() {
     document.getElementById('loading-screen').style.display = 'flex';
-    document.getElementById('error-screen').style.display = 'none';
-    document.getElementById('main-content').style.display = 'none';
-    document.getElementById('refresh-btn').style.display = 'none';
+    document.getElementById('error-screen').style.display   = 'none';
+    document.getElementById('main-content').style.display   = 'none';
+    document.getElementById('refresh-btn').style.display    = 'none';
   }
   function showContent() {
     document.getElementById('loading-screen').style.display = 'none';
-    document.getElementById('error-screen').style.display = 'none';
-    document.getElementById('main-content').style.display = 'block';
-    document.getElementById('refresh-btn').style.display = 'flex';
+    document.getElementById('error-screen').style.display   = 'none';
+    document.getElementById('main-content').style.display   = 'block';
+    document.getElementById('refresh-btn').style.display    = 'flex';
   }
   function showError(msg) {
     document.getElementById('loading-screen').style.display = 'none';
-    document.getElementById('error-screen').style.display = 'flex';
-    document.getElementById('main-content').style.display = 'none';
-    document.getElementById('error-msg').textContent = msg || '';
+    document.getElementById('error-screen').style.display   = 'flex';
+    document.getElementById('main-content').style.display   = 'none';
+    document.getElementById('error-msg').textContent        = msg || '';
   }
 
-  // ── 새로고침 ──
-  function refresh() {
-    const key = cacheKey();
-    delete state.cache[key];
-    loadData();
-  }
+  function refresh() { state.cache = {}; loadData(); }
 
-  // ── 초기화 ──
   function init() {
     // 매장 선택 버튼 생성
     const picker = document.getElementById('store-picker');
     STORES.forEach(name => {
       const btn = document.createElement('button');
-      btn.className = 'store-pill' + (name === state.store ? ' active' : '');
+      btn.className    = 'store-pill' + (name === state.store ? ' active' : '');
       btn.dataset.store = name;
-      btn.textContent = '🏪 ' + name;
+      btn.textContent  = '🏪 ' + name;
       if (name === state.store) btn.style.background = STORE_COLORS[name] || '#1565c0';
       btn.onclick = () => switchStore(name);
       picker.appendChild(btn);
     });
 
-    loadData();
+    // 기본 기간: 오늘
+    setQuickPeriod('today');
   }
 
   init();

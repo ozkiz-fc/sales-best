@@ -66,9 +66,6 @@ function loadImageMap(ss) {
 }
 
 // ── 헤더 구조 확인 (1회 실행 함수) ──────────────────────
-/**
- * 첫 번째 매장 시트의 1~2행 헤더 전체를 출력합니다.
- */
 function debugHeaders() {
   const ss    = SpreadsheetApp.getActiveSpreadsheet();
   const sheet = ss.getSheetByName(STORE_NAMES[0]);
@@ -79,7 +76,6 @@ function debugHeaders() {
 
   for (let hRow = 1; hRow <= 2; hRow++) {
     const headers = sheet.getRange(hRow, 1, 1, lastCol).getValues()[0];
-    // 비어있지 않은 헤더만 출력
     headers.forEach((h, i) => {
       if (String(h || '').trim()) {
         Logger.log('행' + hRow + ' [' + i + '] = "' + String(h).replace(/\n/g, '\\n') + '"');
@@ -88,75 +84,132 @@ function debugHeaders() {
   }
 }
 
-// ── 진입점 ────────────────────────────────────────────────
+
+// ── 진입점 (이지어드민 API) ───────────────────────────────
 function doGet(e) {
   try {
-    const p      = (e && e.parameter) ? e.parameter : {};
-    const mode   = p.mode   || 'weekly';
-    const period = p.period || 'current';
+    const p       = (e && e.parameter) ? e.parameter : {};
+    const noCache = p.nc === '1';
+    const today   = Utilities.formatDate(new Date(), 'Asia/Seoul', 'yyyy-MM-dd');
+    const startDate = p.startDate || today;
+    const endDate   = p.endDate   || today;
 
-    const ss     = SpreadsheetApp.getActiveSpreadsheet();
-    const imgMap = loadImageMap(ss); // 상품리스트에서 이미지 URL 로드
-
-    let overall = [], stores = [];
-
-    if (mode === 'cumulative') {
-      // ── 26년 누적 모드 ──
-      const ppSheet = ss.getSheetByName(OVERALL_SHEET);
-      overall = ppSheet ? readCumulativeSheet(ppSheet, COL_OV_QTY, COL_OV_REV, 22) : [];
-
-      STORE_NAMES.forEach(name => {
-        try {
-          const sheet = ss.getSheetByName(name);
-          if (!sheet) return;
-          const products = readCumulativeSheet(sheet, COL_CUM_QTY, COL_CUM_REV, 12);
-          stores.push({ name, color: STORE_COLORS[name] || '#1565c0', products: products.slice(0, 10) });
-        } catch (err) {
-          stores.push({ name, color: STORE_COLORS[name] || '#1565c0', products: [] });
-        }
-      });
-
-    } else {
-      // ── 주차별 모드 ──
-      const allStore = [];
-      STORE_NAMES.forEach(name => {
-        try {
-          const sheet = ss.getSheetByName(name);
-          if (!sheet) return;
-          const products = readStoreWeekly(sheet, period);
-          allStore.push({ name, color: STORE_COLORS[name] || '#1565c0', products });
-        } catch (err) {
-          allStore.push({ name, color: STORE_COLORS[name] || '#1565c0', products: [] });
-        }
-      });
-      overall = aggregate(allStore, 20);
-      stores  = allStore.map(s => ({ name: s.name, color: s.color, products: s.products.slice(0, 10) }));
+    // 캐시 조회 (10분)
+    const cacheKey = 'ez_v2_' + startDate + '_' + endDate;
+    const cache    = CacheService.getScriptCache();
+    if (!noCache) {
+      const cached = cache.get(cacheKey);
+      if (cached) {
+        return ContentService.createTextOutput(cached).setMimeType(ContentService.MimeType.JSON);
+      }
     }
 
-    // ── 이미지 URL 적용 (상품리스트 매핑) ──
-    const applyImg = prod => { prod.i = imgMap[prod.n] || ''; return prod; };
-    overall = overall.map(applyImg);
-    stores  = stores.map(s => ({ ...s, products: s.products.map(applyImg) }));
+    // 첫 매장으로 세션 유효성 확인
+    const firstItems = fetchEZStore(EZ_STORES[0].code, startDate, endDate);
+    if (firstItems === null) {
+      return ContentService
+        .createTextOutput(JSON.stringify({ error: 'session_expired', message: 'PHPSESSID가 만료됐습니다. Apps Script 스크립트 속성에서 PHPSESSID를 갱신해 주세요.' }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
 
-    const periods = buildPeriodList(ss);
+    // 전 매장 데이터 수집
+    const allStore = [];
+    allStore.push({
+      name: EZ_STORES[0].name, color: EZ_STORES[0].color,
+      products: aggregateEZProducts(firstItems)
+    });
+    EZ_STORES.slice(1).forEach(store => {
+      try {
+        const items = fetchEZStore(store.code, startDate, endDate);
+        allStore.push({ name: store.name, color: store.color, products: aggregateEZProducts(items || []) });
+      } catch(err) {
+        allStore.push({ name: store.name, color: store.color, products: [] });
+      }
+    });
+
+    // 전체 TOP 20 집계
+    const map = {};
+    allStore.forEach(({ products }) => {
+      products.forEach(pr => {
+        if (!map[pr.n]) map[pr.n] = { i: pr.i, c: pr.c, n: pr.n, p: pr.p, q: 0, s: 0 };
+        map[pr.n].q += pr.q;
+        map[pr.n].s += pr.s;
+        if (!map[pr.n].i && pr.i) map[pr.n].i = pr.i;
+      });
+    });
+    const overall = Object.values(map).sort((a, b) => b.s - a.s).slice(0, 20);
 
     const result = {
       updatedAt : Utilities.formatDate(new Date(), 'Asia/Seoul', 'yyyy.MM.dd(EEE) HH:mm'),
-      mode, period, periods, overall, stores
+      startDate, endDate, overall,
+      stores: allStore.map(s => ({ ...s, products: s.products.slice(0, 10) }))
     };
 
-    return ContentService
-      .createTextOutput(JSON.stringify(result))
-      .setMimeType(ContentService.MimeType.JSON);
+    const jsonStr = JSON.stringify(result);
+    try { cache.put(cacheKey, jsonStr, 600); } catch(_) {}
 
-  } catch (err) {
+    return ContentService.createTextOutput(jsonStr).setMimeType(ContentService.MimeType.JSON);
+
+  } catch(err) {
     return ContentService
       .createTextOutput(JSON.stringify({ error: err.message }))
       .setMimeType(ContentService.MimeType.JSON);
   }
 }
 
-// ── 누적 시트 읽기 ────────────────────────────────────────
+// ── 매장별 연간 누적 읽기 (월별 실판매수량·금액 합산) ──────
+function readStoreCumulative(sheet) {
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 3) return [];
+
+  const lastCol = sheet.getLastColumn();
+
+  // 헤더에서 월별 앵커(N월실판매수량) 인덱스 수집
+  let monthAnchors = [];
+  for (let hRow = 1; hRow <= 2; hRow++) {
+    if (lastRow < hRow) continue;
+    const headers = sheet.getRange(hRow, 1, 1, lastCol).getValues()[0];
+    for (let m = 1; m <= 12; m++) {
+      const anchor = headers.findIndex(h =>
+        String(h || '').includes(m + '월') && String(h || '').includes('실판매수량')
+      );
+      if (anchor >= 0) monthAnchors.push(anchor);
+    }
+    if (monthAnchors.length > 0) break;
+  }
+  if (monthAnchors.length === 0) return [];
+
+  // 마지막 앵커+2 까지만 읽기 (앵커+1 = 월별 금액)
+  const maxAnchor = Math.max(...monthAnchors);
+  const readCols  = Math.min(maxAnchor + 2, lastCol);
+  const rows = sheet.getRange(3, 1, lastRow - 2, readCols).getValues();
+
+  const products = [];
+  rows.forEach(row => {
+    const name = String(row[COL_NAME] || '').trim();
+    if (!name) return;
+
+    let totalQty = 0, totalRev = 0;
+    monthAnchors.forEach(anchor => {
+      totalQty += Number(row[anchor])     || 0;
+      totalRev += Number(row[anchor + 1]) || 0;
+    });
+    if (totalQty <= 0 && totalRev <= 0) return;
+
+    products.push({
+      i: '',
+      c: String(row[COL_CAT]   || '').trim() || '기타',
+      n: name,
+      p: Number(row[COL_PRICE]) || 0,
+      q: totalQty,
+      s: totalRev
+    });
+  });
+
+  return products.sort((a, b) => b.s - a.s);
+}
+
+// ── 누적 시트 읽기 (26'PP 전체용) ────────────────────────
 function readCumulativeSheet(sheet, qtyCol, revCol, maxReadCols) {
   const lastRow = sheet.getLastRow();
   if (lastRow < 3) return [];
@@ -271,6 +324,171 @@ function aggregate(allStore, topN) {
     });
   });
   return Object.values(map).sort((a, b) => b.s - a.s).slice(0, topN);
+}
+
+// ════════════════════════════════════════════════════════
+// ── 이지어드민 E700 연동 ──────────────────────────────────
+// ════════════════════════════════════════════════════════
+
+const EZ_STORES = [
+  { name:'남악',  code:89,  color:'#1565c0' },
+  { name:'부천',  code:88,  color:'#2e7d32' },
+  { name:'의정부',code:120, color:'#e65100' },
+  { name:'인천',  code:131, color:'#6a1b9a' },
+  { name:'유성',  code:132, color:'#00695c' },
+  { name:'여수',  code:133, color:'#ad1457' },
+  { name:'율하',  code:70,  color:'#558b2f' },
+  { name:'충장',  code:139, color:'#283593' },
+  { name:'동수원',code:140, color:'#f57f17' },
+  { name:'송파',  code:138, color:'#00838f' },
+  { name:'제주',  code:141, color:'#4e342e' },
+  { name:'괴정',  code:143, color:'#37474f' },
+  { name:'강서',  code:86,  color:'#9e9d24' },
+  { name:'순천',  code:149, color:'#bf360c' },
+  { name:'평택',  code:150, color:'#4527a0' },
+  { name:'고척',  code:152, color:'#01579b' },
+  { name:'원주',  code:156, color:'#1b5e20' },
+  { name:'마리오',code:159, color:'#ff8f00' },
+  { name:'창원',  code:162, color:'#0d47a1' }
+];
+
+// ── 인증 쿠키 생성 (PHPSESSID + remember-me) ──
+function buildEZCookie() {
+  const p      = PropertiesService.getScriptProperties();
+  const sid    = p.getProperty('PHPSESSID')  || '';
+  const domain = p.getProperty('ECN_DOMAIN') || '';
+  const id     = p.getProperty('ECN_ID')     || '';
+  const pw     = p.getProperty('ECN_PW')     || '';
+  return 'PHPSESSID=' + sid +
+         '; ecn_domain=' + domain +
+         '; ecn_id=' + id +
+         '; ecn_pw=' + pw +
+         '; ecn_saveid=1; ecn_savepw=1';
+}
+
+// ── 매장 1개 데이터 가져오기 (null = 세션 만료) ──
+function fetchEZStore(storeCode, startDate, endDate) {
+  try {
+    const resp = UrlFetchApp.fetch('https://ecn5.ezadmin.co.kr/function.php', {
+      method: 'POST',
+      headers: {
+        'Cookie'      : buildEZCookie(),
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Referer'     : 'https://ecn5.ezadmin.co.kr/template.html?template=E700'
+      },
+      payload: 'template=E700&action=grid&str_desc_select=' + storeCode +
+               '&start_date=' + startDate + '&end_date=' + endDate +
+               '&sorting=qty&limit=3000&category=0&time_check=false',
+      followRedirects: true,
+      muteHttpExceptions: true
+    });
+    const html = resp.getContentText();
+    if (html.includes('세션이 종료')) return null;
+    return parseEZResponse(html);
+  } catch(e) {
+    return [];
+  }
+}
+
+// ── HTML 응답에서 제품 배열 파싱 ──
+function parseEZResponse(html) {
+  const m = html.match(/'addRowData',\s*"product_id",\s*(\[\{[\s\S]*?\}\])\s*\)/);
+  if (!m) return [];
+  try { return JSON.parse(m[1]); } catch(e) { return []; }
+}
+
+// ── product_image HTML에서 URL 추출 ──
+function extractEZImageUrl(imgHtml) {
+  if (!imgHtml) return '';
+  const m = imgHtml.match(/\/uploads\/dammom\/(https?:\/\/[^'"\s]+)/);
+  return m ? m[1] : '';
+}
+
+// ── SKU 배열 → 상품명 기준 집계 ──
+function aggregateEZProducts(items) {
+  const map = {};
+  items.forEach(item => {
+    const qty = parseInt(item.real_qty)    || 0;
+    const rev = parseInt(item.real_amount) || 0;
+    if (qty <= 0 && rev <= 0) return;
+    const name = String(item.product_name || '').trim();
+    if (!name) return;
+    const cat = String(item.category || '').split('>')[0].trim() || '기타';
+    if (!map[name]) {
+      map[name] = {
+        i: extractEZImageUrl(item.product_image || ''),
+        c: cat,
+        n: name,
+        p: parseInt(item.price) || 0,
+        q: 0, s: 0
+      };
+    }
+    map[name].q += qty;
+    map[name].s += rev;
+  });
+  return Object.values(map).sort((a, b) => b.s - a.s);
+}
+
+// ── 로그인 → PHPSESSID 획득 ──────────────────────────────
+function ezLogin() {
+  const p      = PropertiesService.getScriptProperties();
+  const domain = p.getProperty('ECN_DOMAIN') || '';
+  const id     = p.getProperty('ECN_ID')     || '';
+  const pw     = p.getProperty('ECN_PW')     || '';
+
+  // 1단계: 로그인 페이지 요청 (PHPSESSID 쿠키 초기값 획득)
+  const init = UrlFetchApp.fetch('https://ecn5.ezadmin.co.kr/', {
+    followRedirects: false,
+    muteHttpExceptions: true
+  });
+  const initCookies = (init.getAllHeaders()['Set-Cookie'] || []);
+  const initSession = [].concat(initCookies).map(c => c.split(';')[0]).join('; ');
+
+  // 2단계: 로그인 POST
+  const loginResp = UrlFetchApp.fetch('https://ecn5.ezadmin.co.kr/function.php', {
+    method: 'POST',
+    headers: {
+      'Cookie'      : initSession,
+      'Content-Type': 'application/x-www-form-urlencoded'
+    },
+    payload: 'template=main&action=login&domain=' + domain +
+             '&id=' + id + '&pw=' + encodeURIComponent(pw),
+    followRedirects: false,
+    muteHttpExceptions: true
+  });
+
+  Logger.log('로그인 응답 코드: ' + loginResp.getResponseCode());
+  Logger.log('로그인 응답 Body: ' + loginResp.getContentText().substring(0, 300));
+
+  const setCookies = loginResp.getAllHeaders()['Set-Cookie'] || [];
+  const session = [].concat(setCookies).map(c => c.split(';')[0]).join('; ');
+  Logger.log('받은 쿠키: ' + session);
+  return session || initSession;
+}
+
+// ── 인증 테스트 (에디터에서 직접 실행) ──────────────────────
+function testEZAdminAuth() {
+  const html = UrlFetchApp.fetch('https://ecn5.ezadmin.co.kr/function.php', {
+    method: 'POST',
+    headers: {
+      'Cookie'      : buildEZCookie(),
+      'Content-Type': 'application/x-www-form-urlencoded'
+    },
+    payload: 'template=E700&action=grid&str_desc_select=89' +
+             '&start_date=2026-05-01&end_date=2026-05-31' +
+             '&sorting=qty&limit=5&category=0&time_check=false',
+    muteHttpExceptions: true
+  }).getContentText();
+
+  const items = parseEZResponse(html);
+  Logger.log('파싱된 상품 수: ' + items.length);
+  if (items.length > 0) {
+    Logger.log('첫 번째 상품: ' + items[0].product_name + ' / 실판매수량: ' + items[0].real_qty);
+    Logger.log('✅ 인증 성공!');
+  } else {
+    Logger.log('❌ 인증 실패 — PHPSESSID 확인 필요');
+    Logger.log('HTML 앞부분: ' + html.substring(0, 200));
+  }
 }
 
 // ── 주차 목록 생성 ────────────────────────────────────────
