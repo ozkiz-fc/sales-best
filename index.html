@@ -429,7 +429,13 @@
     qty  : n => n > 0 ? fmt.num(n) + '개' : '-'
   };
 
-  let state = { tab: 'overall', startDate: '', endDate: '', store: STORES[0], cache: {} };
+  let state = {
+    tab: 'overall',
+    startDate: '', endDate: '',
+    store: STORES[0],
+    cacheOverall: {}, // 전체 탭 캐시
+    cacheStores : {}  // 매장별 탭 캐시
+  };
 
   // ── 날짜 유틸 ──
   function toYMD(d) {
@@ -476,7 +482,8 @@
     ['yesterday','week','lastweek','month','lastmonth'].forEach(t =>
       document.getElementById('btn-' + t).classList.toggle('active', t === type)
     );
-    state.cache = {};
+    state.cacheOverall = {};
+    state.cacheStores  = {};
     loadData();
   }
 
@@ -490,7 +497,8 @@
     );
     state.startDate = s;
     state.endDate   = e;
-    state.cache = {};
+    state.cacheOverall = {};
+    state.cacheStores  = {};
     loadData();
   }
 
@@ -500,8 +508,7 @@
     document.getElementById('tab-overall').classList.toggle('active', tab === 'overall');
     document.getElementById('tab-store').classList.toggle('active', tab === 'store');
     document.getElementById('store-picker').classList.toggle('visible', tab === 'store');
-    const cached = state.cache[state.startDate + '_' + state.endDate];
-    if (cached) renderContent(cached);
+    loadData();
   }
 
   // ── 매장 선택 ──
@@ -512,20 +519,25 @@
       el.classList.toggle('active', active);
       el.style.background = active ? (STORE_COLORS[name] || '#1565c0') : '';
     });
-    const cached = state.cache[state.startDate + '_' + state.endDate];
+    const cached = state.cacheStores[state.startDate + '_' + state.endDate];
     if (cached) renderContent(cached);
   }
 
   // ── 데이터 로드 ──
   async function loadData() {
-    const key = state.startDate + '_' + state.endDate;
-    if (state.cache[key]) { renderContent(state.cache[key]); return; }
+    const dateKey   = state.startDate + '_' + state.endDate;
+    const isOverall = state.tab === 'overall';
+    const cache     = isOverall ? state.cacheOverall : state.cacheStores;
+
+    if (cache[dateKey]) { renderContent(cache[dateKey]); return; }
 
     showLoading();
     document.getElementById('refresh-btn').classList.add('spinning');
 
     try {
-      const url = API_URL + '?startDate=' + state.startDate + '&endDate=' + state.endDate;
+      let url = API_URL + '?startDate=' + state.startDate + '&endDate=' + state.endDate;
+      if (!isOverall) url += '&view=stores';
+
       const res  = await fetch(url);
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const data = await res.json();
@@ -536,7 +548,7 @@
       }
       if (data.error) throw new Error(data.error);
 
-      state.cache[key] = data;
+      cache[dateKey] = data;
       if (data.updatedAt) document.getElementById('updated-at').textContent = data.updatedAt + ' 업데이트';
       renderContent(data);
     } catch(err) {
@@ -634,7 +646,11 @@
     document.getElementById('error-msg').textContent        = msg || '';
   }
 
-  function refresh() { state.cache = {}; loadData(); }
+  function refresh() {
+    state.cacheOverall = {};
+    state.cacheStores  = {};
+    loadData();
+  }
 
   function init() {
     // 매장 선택 버튼 생성

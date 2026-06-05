@@ -85,76 +85,106 @@ function debugHeaders() {
 }
 
 
-// ── 진입점 (이지어드민 API) ───────────────────────────────
+// ── 진입점 ────────────────────────────────────────────────
 function doGet(e) {
   try {
-    const p       = (e && e.parameter) ? e.parameter : {};
-    const noCache = p.nc === '1';
-    const today   = Utilities.formatDate(new Date(), 'Asia/Seoul', 'yyyy-MM-dd');
+    const p         = (e && e.parameter) ? e.parameter : {};
+    const noCache   = p.nc === '1';
+    const today     = Utilities.formatDate(new Date(), 'Asia/Seoul', 'yyyy-MM-dd');
     const startDate = p.startDate || today;
     const endDate   = p.endDate   || today;
+    const view      = p.view || 'overall'; // 'overall' | 'stores'
 
-    // 캐시 조회 (10분)
-    const cacheKey = 'ez_v2_' + startDate + '_' + endDate;
-    const cache    = CacheService.getScriptCache();
-    if (!noCache) {
-      const cached = cache.get(cacheKey);
-      if (cached) {
-        return ContentService.createTextOutput(cached).setMimeType(ContentService.MimeType.JSON);
-      }
-    }
-
-    // 첫 매장으로 세션 유효성 확인
-    const firstItems = fetchEZStore(EZ_STORES[0].code, startDate, endDate);
-    if (firstItems === null) {
-      return ContentService
-        .createTextOutput(JSON.stringify({ error: 'session_expired', message: 'PHPSESSID가 만료됐습니다. Apps Script 스크립트 속성에서 PHPSESSID를 갱신해 주세요.' }))
-        .setMimeType(ContentService.MimeType.JSON);
-    }
-
-    // 전 매장 데이터 수집
-    const allStore = [];
-    allStore.push({
-      name: EZ_STORES[0].name, color: EZ_STORES[0].color,
-      products: aggregateEZProducts(firstItems)
-    });
-    EZ_STORES.slice(1).forEach(store => {
-      try {
-        const items = fetchEZStore(store.code, startDate, endDate);
-        allStore.push({ name: store.name, color: store.color, products: aggregateEZProducts(items || []) });
-      } catch(err) {
-        allStore.push({ name: store.name, color: store.color, products: [] });
-      }
-    });
-
-    // 전체 TOP 20 집계
-    const map = {};
-    allStore.forEach(({ products }) => {
-      products.forEach(pr => {
-        if (!map[pr.n]) map[pr.n] = { i: pr.i, c: pr.c, n: pr.n, p: pr.p, q: 0, s: 0 };
-        map[pr.n].q += pr.q;
-        map[pr.n].s += pr.s;
-        if (!map[pr.n].i && pr.i) map[pr.n].i = pr.i;
-      });
-    });
-    const overall = Object.values(map).sort((a, b) => b.s - a.s).slice(0, 20);
-
-    const result = {
-      updatedAt : Utilities.formatDate(new Date(), 'Asia/Seoul', 'yyyy.MM.dd(EEE) HH:mm'),
-      startDate, endDate, overall,
-      stores: allStore.map(s => ({ ...s, products: s.products.slice(0, 10) }))
-    };
-
-    const jsonStr = JSON.stringify(result);
-    try { cache.put(cacheKey, jsonStr, 600); } catch(_) {}
-
-    return ContentService.createTextOutput(jsonStr).setMimeType(ContentService.MimeType.JSON);
+    return view === 'stores'
+      ? getStoresView(startDate, endDate, noCache)
+      : getOverallView(startDate, endDate, noCache);
 
   } catch(err) {
     return ContentService
       .createTextOutput(JSON.stringify({ error: err.message }))
       .setMimeType(ContentService.MimeType.JSON);
   }
+}
+
+// ── 전체 매장 뷰: 매장 선택 없이 1번 조회 ─────────────────
+function getOverallView(startDate, endDate, noCache) {
+  const cacheKey = 'ez_overall_' + startDate + '_' + endDate;
+  const cache    = CacheService.getScriptCache();
+  if (!noCache) {
+    const cached = cache.get(cacheKey);
+    if (cached) return ContentService.createTextOutput(cached).setMimeType(ContentService.MimeType.JSON);
+  }
+
+  const resp = UrlFetchApp.fetch('https://ecn5.ezadmin.co.kr/function.php', {
+    method : 'POST',
+    headers: {
+      'Cookie'      : buildEZCookie(),
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'Referer'     : 'https://ecn5.ezadmin.co.kr/template.html?template=E700'
+    },
+    payload: 'template=E700&action=grid&str_desc_select=' +
+             '&start_date=' + startDate + '&end_date=' + endDate +
+             '&sorting=qty&limit=3000&category=0&time_check=false',
+    followRedirects: true, muteHttpExceptions: true
+  });
+
+  const html = resp.getContentText();
+  if (html.includes('세션이 종료')) {
+    return ContentService.createTextOutput(JSON.stringify({ error: 'session_expired' })).setMimeType(ContentService.MimeType.JSON);
+  }
+
+  const overall = aggregateEZProducts(parseEZResponse(html) || []).slice(0, 20);
+  const result  = {
+    updatedAt: Utilities.formatDate(new Date(), 'Asia/Seoul', 'yyyy.MM.dd(EEE) HH:mm'),
+    view: 'overall', startDate, endDate, overall
+  };
+
+  const jsonStr = JSON.stringify(result);
+  try { cache.put(cacheKey, jsonStr, 600); } catch(_) {}
+  return ContentService.createTextOutput(jsonStr).setMimeType(ContentService.MimeType.JSON);
+}
+
+// ── 매장별 뷰: 19개 병렬 조회 ─────────────────────────────
+function getStoresView(startDate, endDate, noCache) {
+  const cacheKey = 'ez_stores_' + startDate + '_' + endDate;
+  const cache    = CacheService.getScriptCache();
+  if (!noCache) {
+    const cached = cache.get(cacheKey);
+    if (cached) return ContentService.createTextOutput(cached).setMimeType(ContentService.MimeType.JSON);
+  }
+
+  const cookie   = buildEZCookie();
+  const requests = EZ_STORES.map(store => ({
+    url    : 'https://ecn5.ezadmin.co.kr/function.php',
+    method : 'POST',
+    headers: { 'Cookie': cookie, 'Content-Type': 'application/x-www-form-urlencoded',
+               'Referer': 'https://ecn5.ezadmin.co.kr/template.html?template=E700' },
+    payload: 'template=E700&action=grid&str_desc_select=' + store.code +
+             '&start_date=' + startDate + '&end_date=' + endDate +
+             '&sorting=qty&limit=3000&category=0&time_check=false',
+    followRedirects: true, muteHttpExceptions: true
+  }));
+
+  const responses = UrlFetchApp.fetchAll(requests);
+  if (responses[0].getContentText().includes('세션이 종료')) {
+    return ContentService.createTextOutput(JSON.stringify({ error: 'session_expired' })).setMimeType(ContentService.MimeType.JSON);
+  }
+
+  const stores = EZ_STORES.map((store, idx) => {
+    const html  = responses[idx].getContentText();
+    const items = html.includes('세션이 종료') ? [] : (parseEZResponse(html) || []);
+    return { name: store.name, color: store.color, products: aggregateEZProducts(items).slice(0, 10) };
+  });
+
+  const result = {
+    updatedAt: Utilities.formatDate(new Date(), 'Asia/Seoul', 'yyyy.MM.dd(EEE) HH:mm'),
+    view: 'stores', startDate, endDate, stores
+  };
+
+  const jsonStr = JSON.stringify(result);
+  try { cache.put(cacheKey, jsonStr, 600); } catch(_) {}
+  return ContentService.createTextOutput(jsonStr).setMimeType(ContentService.MimeType.JSON);
+}
 }
 
 // ── 매장별 연간 누적 읽기 (월별 실판매수량·금액 합산) ──────
