@@ -185,7 +185,6 @@ function getStoresView(startDate, endDate, noCache) {
   try { cache.put(cacheKey, jsonStr, 600); } catch(_) {}
   return ContentService.createTextOutput(jsonStr).setMimeType(ContentService.MimeType.JSON);
 }
-}
 
 // ── 매장별 연간 누적 읽기 (월별 실판매수량·금액 합산) ──────
 function readStoreCumulative(sheet) {
