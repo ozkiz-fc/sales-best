@@ -350,7 +350,7 @@
 
 <!-- ── 기간 선택 바 ── -->
 <div class="controls-bar">
-  <button class="period-btn active" id="btn-today"     onclick="setQuickPeriod('today')">오늘</button>
+  <button class="period-btn active" id="btn-yesterday" onclick="setQuickPeriod('yesterday')">어제</button>
   <button class="period-btn"        id="btn-week"      onclick="setQuickPeriod('week')">금주</button>
   <button class="period-btn"        id="btn-lastweek"  onclick="setQuickPeriod('lastweek')">전주</button>
   <button class="period-btn"        id="btn-month"     onclick="setQuickPeriod('month')">이번달</button>
@@ -450,7 +450,10 @@
     const today = new Date();
     let start = today, end = today;
 
-    if (type === 'week') {
+    if (type === 'yesterday') {
+      start = new Date(today); start.setDate(today.getDate() - 1);
+      end   = start;
+    } else if (type === 'week') {
       start = getMonday(today);
     } else if (type === 'lastweek') {
       const mon = getMonday(today);
@@ -469,7 +472,7 @@
     document.getElementById('date-start').value = state.startDate;
     document.getElementById('date-end').value   = state.endDate;
 
-    ['today','week','lastweek','month','lastmonth'].forEach(t =>
+    ['yesterday','week','lastweek','month','lastmonth'].forEach(t =>
       document.getElementById('btn-' + t).classList.toggle('active', t === type)
     );
     state.cache = {};
@@ -481,7 +484,7 @@
     const s = document.getElementById('date-start').value;
     const e = document.getElementById('date-end').value;
     if (!s || !e || s > e) return;
-    ['today','week','lastweek','month','lastmonth'].forEach(t =>
+    ['yesterday','week','lastweek','month','lastmonth'].forEach(t =>
       document.getElementById('btn-' + t).classList.remove('active')
     );
     state.startDate = s;
@@ -646,7 +649,7 @@
     });
 
     // 기본 기간: 오늘
-    setQuickPeriod('today');
+    setQuickPeriod('yesterday');
   }
 
   init();
