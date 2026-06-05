@@ -106,47 +106,9 @@ function doGet(e) {
   }
 }
 
-// ── 전체 매장 뷰: 매장 선택 없이 1번 조회 ─────────────────
+// ── 전체 매장 뷰: EZ_STORES 19개 병렬 요청 후 TOP 20 합산 ──
 function getOverallView(startDate, endDate, noCache) {
   const cacheKey = 'ez_overall_' + startDate + '_' + endDate;
-  const cache    = CacheService.getScriptCache();
-  if (!noCache) {
-    const cached = cache.get(cacheKey);
-    if (cached) return ContentService.createTextOutput(cached).setMimeType(ContentService.MimeType.JSON);
-  }
-
-  const resp = UrlFetchApp.fetch('https://ecn5.ezadmin.co.kr/function.php', {
-    method : 'POST',
-    headers: {
-      'Cookie'      : buildEZCookie(),
-      'Content-Type': 'application/x-www-form-urlencoded',
-      'Referer'     : 'https://ecn5.ezadmin.co.kr/template.html?template=E700'
-    },
-    payload: 'template=E700&action=grid&str_desc_select=' +
-             '&start_date=' + startDate + '&end_date=' + endDate +
-             '&sorting=qty&limit=3000&category=0&time_check=false',
-    followRedirects: true, muteHttpExceptions: true
-  });
-
-  const html = resp.getContentText();
-  if (html.includes('세션이 종료')) {
-    return ContentService.createTextOutput(JSON.stringify({ error: 'session_expired' })).setMimeType(ContentService.MimeType.JSON);
-  }
-
-  const overall = aggregateEZProducts(parseEZResponse(html) || []).slice(0, 20);
-  const result  = {
-    updatedAt: Utilities.formatDate(new Date(), 'Asia/Seoul', 'yyyy.MM.dd(EEE) HH:mm'),
-    view: 'overall', startDate, endDate, overall
-  };
-
-  const jsonStr = JSON.stringify(result);
-  try { cache.put(cacheKey, jsonStr, 600); } catch(_) {}
-  return ContentService.createTextOutput(jsonStr).setMimeType(ContentService.MimeType.JSON);
-}
-
-// ── 매장별 뷰: 19개 병렬 조회 ─────────────────────────────
-function getStoresView(startDate, endDate, noCache) {
-  const cacheKey = 'ez_stores_' + startDate + '_' + endDate;
   const cache    = CacheService.getScriptCache();
   if (!noCache) {
     const cached = cache.get(cacheKey);
@@ -166,9 +128,59 @@ function getStoresView(startDate, endDate, noCache) {
   }));
 
   const responses = UrlFetchApp.fetchAll(requests);
+
+  // 세션 만료 감지
   if (responses[0].getContentText().includes('세션이 종료')) {
+    if (autoLogin()) return getOverallView(startDate, endDate, true);
     return ContentService.createTextOutput(JSON.stringify({ error: 'session_expired' })).setMimeType(ContentService.MimeType.JSON);
   }
+
+  // 전체 합산 → TOP 20
+  const allItems = [];
+  responses.forEach(resp => {
+    const html = resp.getContentText();
+    if (!html.includes('세션이 종료')) allItems.push(...(parseEZResponse(html) || []));
+  });
+
+  const overall = aggregateEZProducts(allItems).slice(0, 20);
+  const result  = {
+    updatedAt: Utilities.formatDate(new Date(), 'Asia/Seoul', 'yyyy.MM.dd(EEE) HH:mm'),
+    view: 'overall', startDate, endDate, overall
+  };
+
+  const jsonStr = JSON.stringify(result);
+  try { cache.put(cacheKey, jsonStr, 21600); } catch(_) {} // 6시간 캐시 (CacheService 최대값)
+  return ContentService.createTextOutput(jsonStr).setMimeType(ContentService.MimeType.JSON);
+}
+
+// ── 매장별 뷰: 19개 병렬 조회 ─────────────────────────────
+function getStoresView(startDate, endDate, noCache) {
+  const cacheKey = 'ez_stores_' + startDate + '_' + endDate;
+  const cache    = CacheService.getScriptCache();
+  if (!noCache) {
+    const cached = cache.get(cacheKey);
+    if (cached) return ContentService.createTextOutput(cached).setMimeType(ContentService.MimeType.JSON);
+  }
+
+  // 세션 유효성 먼저 확인 후 병렬 요청
+  const testHtml = ezRequest(EZ_STORES[0].code, startDate, endDate);
+  if (!testHtml) {
+    return ContentService.createTextOutput(JSON.stringify({ error: 'session_expired' })).setMimeType(ContentService.MimeType.JSON);
+  }
+
+  const cookie   = buildEZCookie(); // autoLogin으로 갱신된 쿠키 사용
+  const requests = EZ_STORES.map(store => ({
+    url    : 'https://ecn5.ezadmin.co.kr/function.php',
+    method : 'POST',
+    headers: { 'Cookie': cookie, 'Content-Type': 'application/x-www-form-urlencoded',
+               'Referer': 'https://ecn5.ezadmin.co.kr/template.html?template=E700' },
+    payload: 'template=E700&action=grid&str_desc_select=' + store.code +
+             '&start_date=' + startDate + '&end_date=' + endDate +
+             '&sorting=qty&limit=3000&category=0&time_check=false',
+    followRedirects: true, muteHttpExceptions: true
+  }));
+
+  const responses = UrlFetchApp.fetchAll(requests);
 
   const stores = EZ_STORES.map((store, idx) => {
     const html  = responses[idx].getContentText();
@@ -381,7 +393,7 @@ const EZ_STORES = [
   { name:'창원',  code:162, color:'#0d47a1' }
 ];
 
-// ── 인증 쿠키 생성 (PHPSESSID + remember-me) ──
+// ── 인증 쿠키 생성 ──────────────────────────────────────────
 function buildEZCookie() {
   const p      = PropertiesService.getScriptProperties();
   const sid    = p.getProperty('PHPSESSID')  || '';
@@ -389,11 +401,127 @@ function buildEZCookie() {
   const id     = p.getProperty('ECN_ID')     || '';
   const pw     = p.getProperty('ECN_PW')     || '';
   return 'PHPSESSID=' + sid +
-         '; ecn_domain=' + domain +
-         '; ecn_id=' + id +
-         '; ecn_pw=' + pw +
+         '; ecn_domain=' + domain + '; ecn_id=' + id + '; ecn_pw=' + pw +
          '; ecn_saveid=1; ecn_savepw=1';
 }
+
+// ── 자동 로그인 (세션 만료 시 호출) ──────────────────────────
+function autoLogin() {
+  const props  = PropertiesService.getScriptProperties();
+  const domain = props.getProperty('ECN_DOMAIN') || '';
+  const id     = props.getProperty('ECN_ID')     || '';
+  const pw     = props.getProperty('ECN_PW')     || '';
+
+  const rememberCookie = 'ecn_domain=' + domain + '; ecn_id=' + id +
+                         '; ecn_pw=' + pw + '; ecn_saveid=1; ecn_savepw=1';
+  try {
+    const resp = UrlFetchApp.fetch('https://ecn5.ezadmin.co.kr/', {
+      headers: { 'Cookie': rememberCookie },
+      followRedirects: true,
+      muteHttpExceptions: true
+    });
+    const allCookies = [].concat(resp.getAllHeaders()['Set-Cookie'] || []);
+    const entry = allCookies.map(c => c.split(';')[0]).find(c => /^PHPSESSID=.+/.test(c));
+    if (entry) {
+      const newSid = entry.split('=')[1];
+      props.setProperty('PHPSESSID', newSid);
+      Logger.log('✅ 자동 로그인 성공 — 새 PHPSESSID 저장');
+      return true;
+    }
+  } catch(e) {
+    Logger.log('❌ 자동 로그인 오류: ' + e.message);
+  }
+  return false;
+}
+
+// ── EZAdmin 단일 요청 (세션 만료 시 자동 재시도) ─────────────
+function ezRequest(storeCode, startDate, endDate, limit) {
+  limit = limit || 3000;
+  const makeCall = () => UrlFetchApp.fetch('https://ecn5.ezadmin.co.kr/function.php', {
+    method : 'POST',
+    headers: { 'Cookie': buildEZCookie(), 'Content-Type': 'application/x-www-form-urlencoded',
+               'Referer': 'https://ecn5.ezadmin.co.kr/template.html?template=E700' },
+    payload: 'template=E700&action=grid&str_desc_select=' + storeCode +
+             '&start_date=' + startDate + '&end_date=' + endDate +
+             '&sorting=qty&limit=' + limit + '&category=0&time_check=false',
+    followRedirects: true, muteHttpExceptions: true
+  }).getContentText();
+
+  let html = makeCall();
+  if (html.includes('세션이 종료')) {
+    if (autoLogin()) html = makeCall(); // 1회 재시도
+  }
+  return html.includes('세션이 종료') ? null : html;
+}
+
+// ── Apps Script용 화요일 계산 ─────────────────────────────
+function getThisTuesdayGS(d) {
+  const day  = d.getDay();
+  const diff = day === 0 ? -5 : day === 1 ? -6 : 2 - day;
+  const tue  = new Date(d.getTime());
+  tue.setDate(d.getDate() + diff);
+  return tue;
+}
+
+// ── 사전 계산 & 캐시 워밍 (트리거에서 실행) ──────────────────
+// 어제까지의 데이터만 사용 → 하루 1회 새벽 실행으로 충분
+function precomputeAndCache() {
+  const KST  = 'Asia/Seoul';
+  const fmt  = d => Utilities.formatDate(d, KST, 'yyyy-MM-dd');
+  const today = new Date();
+
+  // 어제 (기준일)
+  const yest = new Date(today); yest.setDate(today.getDate() - 1);
+
+  // 금주: 이번 화요일 ~ 어제
+  const thisTue = getThisTuesdayGS(today);
+
+  // 전주: 저번 화요일 ~ 저번 월요일
+  const lastMon = new Date(thisTue); lastMon.setDate(thisTue.getDate() - 1);
+  const lastTue = new Date(lastMon); lastTue.setDate(lastMon.getDate() - 6);
+
+  // 이번달: 1일 ~ 어제
+  const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+
+  // 전월: 전월 1일 ~ 전월 말일
+  const prevEnd   = new Date(monthStart); prevEnd.setDate(prevEnd.getDate() - 1);
+  const prevStart = new Date(prevEnd.getFullYear(), prevEnd.getMonth(), 1);
+
+  const periods = [
+    { s: fmt(yest),      e: fmt(yest)      },  // 어제
+    { s: fmt(thisTue),   e: fmt(yest)      },  // 금주 (화요일~어제)
+    { s: fmt(lastTue),   e: fmt(lastMon)   },  // 전주
+    { s: fmt(monthStart),e: fmt(yest)      },  // 이번달 (1일~어제)
+    { s: fmt(prevStart), e: fmt(prevEnd)   }   // 전월
+  ];
+
+  // 세션 확인 → 필요 시 자동 로그인
+  const test = UrlFetchApp.fetch('https://ecn5.ezadmin.co.kr/function.php', {
+    method: 'POST',
+    headers: { 'Cookie': buildEZCookie(), 'Content-Type': 'application/x-www-form-urlencoded' },
+    payload: 'template=main&action=rt_status', muteHttpExceptions: true
+  }).getContentText();
+
+  if (test.includes('세션이 종료')) {
+    if (!autoLogin()) { Logger.log('❌ 세션 갱신 실패 — 사전 계산 중단'); return; }
+    Logger.log('✅ 세션 갱신 성공');
+  }
+
+  // 각 기간 사전 계산 (캐시 1시간)
+  periods.forEach(({ s, e }) => {
+    try {
+      getOverallView(s, e, true); // noCache=true → 강제 재계산 후 캐시 저장
+      Logger.log('✅ 캐시 완료: ' + s + ' ~ ' + e);
+    } catch(err) {
+      Logger.log('❌ 오류: ' + s + ' ~ ' + e + ' — ' + err.message);
+    }
+  });
+
+  Logger.log('🎉 사전 계산 완료 — ' + Utilities.formatDate(today, KST, 'HH:mm'));
+}
+
+// ── 하위 호환 (기존 트리거 이름 유지) ────────────────────────
+function keepSessionAlive() { precomputeAndCache(); }
 
 // ── 매장 1개 데이터 가져오기 (null = 세션 만료) ──
 function fetchEZStore(storeCode, startDate, endDate) {

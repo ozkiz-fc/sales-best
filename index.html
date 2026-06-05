@@ -457,17 +457,20 @@
     const today = new Date();
     let start = today, end = today;
 
+    const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
+
     if (type === 'yesterday') {
-      start = new Date(today); start.setDate(today.getDate() - 1);
-      end   = start;
+      start = end = yesterday;
     } else if (type === 'week') {
-      start = getThisTuesday(today);   // 이번주 화요일~오늘
+      start = getThisTuesday(today);
+      end   = yesterday;              // 화요일~어제
     } else if (type === 'lastweek') {
       const thisTue = getThisTuesday(today);
       end   = new Date(thisTue); end.setDate(thisTue.getDate() - 1);   // 저번주 월요일
       start = new Date(end);     start.setDate(end.getDate() - 6);     // 저번주 화요일
     } else if (type === 'month') {
       start = new Date(today.getFullYear(), today.getMonth(), 1);
+      end   = yesterday;              // 1일~어제
     } else if (type === 'lastmonth') {
       const first = new Date(today.getFullYear(), today.getMonth(), 1);
       end   = new Date(first); end.setDate(first.getDate() - 1);
