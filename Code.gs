@@ -65,6 +65,35 @@ function loadImageMap(ss) {
   return map;
 }
 
+// ── 세션 진단 (1회 실행 함수) ────────────────────────────────
+function debugSession() {
+  const cookie = buildEZCookie();
+  Logger.log('PHPSESSID 앞 10자: ' + cookie.substring(10, 20) + '...');
+
+  // rt_status 테스트
+  const r1 = UrlFetchApp.fetch('https://ecn5.ezadmin.co.kr/function.php', {
+    method: 'POST',
+    headers: { 'Cookie': cookie, 'Content-Type': 'application/x-www-form-urlencoded' },
+    payload: 'template=main&action=rt_status', muteHttpExceptions: true
+  });
+  Logger.log('[rt_status] 코드: ' + r1.getResponseCode() + ' / 응답: ' + r1.getContentText().substring(0, 150));
+
+  // 실제 E700 데이터 요청 테스트 (남악, 어제 1건)
+  const today = new Date();
+  today.setDate(today.getDate() - 1);
+  const ymd = Utilities.formatDate(today, 'Asia/Seoul', 'yyyy-MM-dd');
+  const r2 = UrlFetchApp.fetch('https://ecn5.ezadmin.co.kr/function.php', {
+    method: 'POST',
+    headers: { 'Cookie': cookie, 'Content-Type': 'application/x-www-form-urlencoded',
+               'Referer': 'https://ecn5.ezadmin.co.kr/template.html?template=E700' },
+    payload: 'template=E700&action=grid&str_desc_select=89&start_date=' + ymd + '&end_date=' + ymd + '&sorting=qty&limit=1&category=0&time_check=false',
+    muteHttpExceptions: true
+  });
+  const h = r2.getContentText();
+  Logger.log('[E700] 세션만료여부: ' + h.includes('세션이 종료'));
+  Logger.log('[E700] 응답 앞부분: ' + h.substring(0, 200));
+}
+
 // ── 헤더 구조 확인 (1회 실행 함수) ──────────────────────
 function debugHeaders() {
   const ss    = SpreadsheetApp.getActiveSpreadsheet();
@@ -84,6 +113,45 @@ function debugHeaders() {
   }
 }
 
+
+// ── EZAdmin 순차 요청 + 세션 로테이션 자동 갱신 ──────────────
+// EZAdmin은 매 요청마다 PHPSESSID를 교체함 → 순차로 최신 쿠키를 사용해야 함
+function fetchEZBatch(requests) {
+  const htmls = new Array(requests.length).fill('');
+  const props = PropertiesService.getScriptProperties();
+
+  for (let i = 0; i < requests.length; i++) {
+    // 항상 최신 PHPSESSID로 쿠키 재구성
+    const req = Object.assign({}, requests[i], {
+      headers: Object.assign({}, requests[i].headers, { 'Cookie': buildEZCookie() })
+    });
+
+    const resp = UrlFetchApp.fetch(req.url, req);
+
+    // 응답에서 새 PHPSESSID 자동 저장 (세션 로테이션 대응)
+    const sc = [].concat(resp.getAllHeaders()['Set-Cookie'] || []);
+    const ns = sc.map(c => c.split(';')[0]).find(c => /^PHPSESSID=.+/.test(c));
+    if (ns) props.setProperty('PHPSESSID', ns.split('=')[1]);
+
+    const h = resp.getContentText();
+    if (!h.includes('세션이 종료')) {
+      htmls[i] = h;
+    } else {
+      // 세션 만료 시 1회 즉시 재시도 (다른 서버로 라우팅될 수 있음)
+      Utilities.sleep(300);
+      const req2 = Object.assign({}, req, {
+        headers: Object.assign({}, req.headers, { 'Cookie': buildEZCookie() })
+      });
+      const resp2 = UrlFetchApp.fetch(req2.url, req2);
+      const sc2 = [].concat(resp2.getAllHeaders()['Set-Cookie'] || []);
+      const ns2 = sc2.map(c => c.split(';')[0]).find(c => /^PHPSESSID=.+/.test(c));
+      if (ns2) props.setProperty('PHPSESSID', ns2.split('=')[1]);
+      htmls[i] = resp2.getContentText().includes('세션이 종료') ? '' : resp2.getContentText();
+    }
+  }
+
+  return htmls.map(h => ({ getContentText: () => h }));
+}
 
 // ── 진입점 ────────────────────────────────────────────────
 function doGet(e) {
@@ -106,7 +174,7 @@ function doGet(e) {
   }
 }
 
-// ── 전체 매장 뷰: EZ_STORES 19개 병렬 요청 후 TOP 20 합산 ──
+// ── 전체 매장 뷰: EZ_STORES 순차 요청 후 TOP 20 집계 ──────────
 function getOverallView(startDate, endDate, noCache) {
   const cacheKey = 'ez_overall_' + startDate + '_' + endDate;
   const cache    = CacheService.getScriptCache();
@@ -115,11 +183,10 @@ function getOverallView(startDate, endDate, noCache) {
     if (cached) return ContentService.createTextOutput(cached).setMimeType(ContentService.MimeType.JSON);
   }
 
-  const cookie   = buildEZCookie();
   const requests = EZ_STORES.map(store => ({
     url    : 'https://ecn5.ezadmin.co.kr/function.php',
     method : 'POST',
-    headers: { 'Cookie': cookie, 'Content-Type': 'application/x-www-form-urlencoded',
+    headers: { 'Cookie': buildEZCookie(), 'Content-Type': 'application/x-www-form-urlencoded',
                'Referer': 'https://ecn5.ezadmin.co.kr/template.html?template=E700' },
     payload: 'template=E700&action=grid&str_desc_select=' + store.code +
              '&start_date=' + startDate + '&end_date=' + endDate +
@@ -127,11 +194,11 @@ function getOverallView(startDate, endDate, noCache) {
     followRedirects: true, muteHttpExceptions: true
   }));
 
-  const responses = UrlFetchApp.fetchAll(requests);
+  const responses = fetchEZBatch(requests);
 
   // 세션 만료 감지
-  if (responses[0].getContentText().includes('세션이 종료')) {
-    if (autoLogin()) return getOverallView(startDate, endDate, true);
+  const firstHtml = responses[0].getContentText();
+  if (firstHtml.includes('세션이 종료')) {
     return ContentService.createTextOutput(JSON.stringify({ error: 'session_expired' })).setMimeType(ContentService.MimeType.JSON);
   }
 
@@ -139,7 +206,7 @@ function getOverallView(startDate, endDate, noCache) {
   const allItems = [];
   responses.forEach(resp => {
     const html = resp.getContentText();
-    if (!html.includes('세션이 종료')) allItems.push(...(parseEZResponse(html) || []));
+    if (html && !html.includes('세션이 종료')) allItems.push(...(parseEZResponse(html) || []));
   });
 
   const overall = aggregateEZProducts(allItems).slice(0, 20);
@@ -149,7 +216,7 @@ function getOverallView(startDate, endDate, noCache) {
   };
 
   const jsonStr = JSON.stringify(result);
-  try { cache.put(cacheKey, jsonStr, 21600); } catch(_) {} // 6시간 캐시 (CacheService 최대값)
+  try { cache.put(cacheKey, jsonStr, 21600); } catch(_) {}
   return ContentService.createTextOutput(jsonStr).setMimeType(ContentService.MimeType.JSON);
 }
 
@@ -162,11 +229,7 @@ function getStoresView(startDate, endDate, noCache) {
     if (cached) return ContentService.createTextOutput(cached).setMimeType(ContentService.MimeType.JSON);
   }
 
-  // 세션 유효성 먼저 확인 후 병렬 요청
-  const testHtml = ezRequest(EZ_STORES[0].code, startDate, endDate);
-  if (!testHtml) {
-    return ContentService.createTextOutput(JSON.stringify({ error: 'session_expired' })).setMimeType(ContentService.MimeType.JSON);
-  }
+  // 세션 유효성: 첫 번째 병렬 요청 결과로 판단 (rt_status 불필요)
 
   const cookie   = buildEZCookie(); // autoLogin으로 갱신된 쿠키 사용
   const requests = EZ_STORES.map(store => ({
@@ -180,7 +243,7 @@ function getStoresView(startDate, endDate, noCache) {
     followRedirects: true, muteHttpExceptions: true
   }));
 
-  const responses = UrlFetchApp.fetchAll(requests);
+  const responses = fetchEZBatch(requests);
 
   const stores = EZ_STORES.map((store, idx) => {
     const html  = responses[idx].getContentText();
@@ -405,39 +468,11 @@ function buildEZCookie() {
          '; ecn_saveid=1; ecn_savepw=1';
 }
 
-// ── 자동 로그인 (세션 만료 시 호출) ──────────────────────────
-function autoLogin() {
-  const props  = PropertiesService.getScriptProperties();
-  const domain = props.getProperty('ECN_DOMAIN') || '';
-  const id     = props.getProperty('ECN_ID')     || '';
-  const pw     = props.getProperty('ECN_PW')     || '';
 
-  const rememberCookie = 'ecn_domain=' + domain + '; ecn_id=' + id +
-                         '; ecn_pw=' + pw + '; ecn_saveid=1; ecn_savepw=1';
-  try {
-    const resp = UrlFetchApp.fetch('https://ecn5.ezadmin.co.kr/', {
-      headers: { 'Cookie': rememberCookie },
-      followRedirects: true,
-      muteHttpExceptions: true
-    });
-    const allCookies = [].concat(resp.getAllHeaders()['Set-Cookie'] || []);
-    const entry = allCookies.map(c => c.split(';')[0]).find(c => /^PHPSESSID=.+/.test(c));
-    if (entry) {
-      const newSid = entry.split('=')[1];
-      props.setProperty('PHPSESSID', newSid);
-      Logger.log('✅ 자동 로그인 성공 — 새 PHPSESSID 저장');
-      return true;
-    }
-  } catch(e) {
-    Logger.log('❌ 자동 로그인 오류: ' + e.message);
-  }
-  return false;
-}
-
-// ── EZAdmin 단일 요청 (세션 만료 시 자동 재시도) ─────────────
+// ── EZAdmin 단일 요청 ────────────────────────────────────────
 function ezRequest(storeCode, startDate, endDate, limit) {
   limit = limit || 3000;
-  const makeCall = () => UrlFetchApp.fetch('https://ecn5.ezadmin.co.kr/function.php', {
+  const html = UrlFetchApp.fetch('https://ecn5.ezadmin.co.kr/function.php', {
     method : 'POST',
     headers: { 'Cookie': buildEZCookie(), 'Content-Type': 'application/x-www-form-urlencoded',
                'Referer': 'https://ecn5.ezadmin.co.kr/template.html?template=E700' },
@@ -446,11 +481,6 @@ function ezRequest(storeCode, startDate, endDate, limit) {
              '&sorting=qty&limit=' + limit + '&category=0&time_check=false',
     followRedirects: true, muteHttpExceptions: true
   }).getContentText();
-
-  let html = makeCall();
-  if (html.includes('세션이 종료')) {
-    if (autoLogin()) html = makeCall(); // 1회 재시도
-  }
   return html.includes('세션이 종료') ? null : html;
 }
 
@@ -495,17 +525,32 @@ function precomputeAndCache() {
     { s: fmt(prevStart), e: fmt(prevEnd)   }   // 전월
   ];
 
-  // 세션 확인 → 필요 시 자동 로그인
-  const test = UrlFetchApp.fetch('https://ecn5.ezadmin.co.kr/function.php', {
-    method: 'POST',
-    headers: { 'Cookie': buildEZCookie(), 'Content-Type': 'application/x-www-form-urlencoded' },
-    payload: 'template=main&action=rt_status', muteHttpExceptions: true
-  }).getContentText();
+  // 세션 확인 (로드밸런서 대응: 최대 3회 재시도)
+  const checkDate = Utilities.formatDate(new Date(new Date().getTime() - 86400000), 'Asia/Seoul', 'yyyy-MM-dd');
+  const sessionOk = (() => {
+    for (let i = 0; i < 3; i++) {
+      const r = UrlFetchApp.fetch('https://ecn5.ezadmin.co.kr/function.php', {
+        method : 'POST',
+        headers: { 'Cookie': buildEZCookie(), 'Content-Type': 'application/x-www-form-urlencoded',
+                   'Referer': 'https://ecn5.ezadmin.co.kr/template.html?template=E700' },
+        payload : 'template=E700&action=grid&str_desc_select=89&start_date=' + checkDate +
+                  '&end_date=' + checkDate + '&sorting=qty&limit=1&category=0&time_check=false',
+        muteHttpExceptions: true
+      });
+      // 새 PHPSESSID 자동 저장
+      const sc = [].concat(r.getAllHeaders()['Set-Cookie'] || []);
+      const ns = sc.map(c => c.split(';')[0]).find(c => /^PHPSESSID=.+/.test(c));
+      if (ns) PropertiesService.getScriptProperties().setProperty('PHPSESSID', ns.split('=')[1]);
+      if (!r.getContentText().includes('세션이 종료')) return true;
+    }
+    return false;
+  })();
 
-  if (test.includes('세션이 종료')) {
-    if (!autoLogin()) { Logger.log('❌ 세션 갱신 실패 — 사전 계산 중단'); return; }
-    Logger.log('✅ 세션 갱신 성공');
+  if (!sessionOk) {
+    Logger.log('⚠️ 세션 만료 — PHPSESSID를 수동으로 갱신해 주세요.');
+    return;
   }
+  Logger.log('✅ 세션 확인 완료');
 
   // 각 기간 사전 계산 (캐시 1시간)
   periods.forEach(({ s, e }) => {
@@ -520,8 +565,23 @@ function precomputeAndCache() {
   Logger.log('🎉 사전 계산 완료 — ' + Utilities.formatDate(today, KST, 'HH:mm'));
 }
 
-// ── 하위 호환 (기존 트리거 이름 유지) ────────────────────────
-function keepSessionAlive() { precomputeAndCache(); }
+// ── 세션 유지 ping (별도 30분 트리거용) ─────────────────────
+function keepSessionAlive() {
+  const ymd  = Utilities.formatDate(new Date(new Date().getTime() - 86400000), 'Asia/Seoul', 'yyyy-MM-dd');
+  const html = UrlFetchApp.fetch('https://ecn5.ezadmin.co.kr/function.php', {
+    method : 'POST',
+    headers: { 'Cookie': buildEZCookie(), 'Content-Type': 'application/x-www-form-urlencoded',
+               'Referer': 'https://ecn5.ezadmin.co.kr/template.html?template=E700' },
+    payload : 'template=E700&action=grid&str_desc_select=89&start_date=' + ymd + '&end_date=' + ymd + '&sorting=qty&limit=1&category=0&time_check=false',
+    muteHttpExceptions: true
+  }).getContentText();
+
+  if (html.includes('세션이 종료')) {
+    Logger.log('⚠️ 세션 만료 — PHPSESSID 수동 갱신 필요');
+  } else {
+    Logger.log('✅ 세션 정상: ' + Utilities.formatDate(new Date(), 'Asia/Seoul', 'HH:mm'));
+  }
+}
 
 // ── 매장 1개 데이터 가져오기 (null = 세션 만료) ──
 function fetchEZStore(storeCode, startDate, endDate) {
