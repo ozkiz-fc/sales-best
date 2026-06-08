@@ -174,6 +174,58 @@ function doGet(e) {
   }
 }
 
+// ── 기간별 일괄 계산 & 캐시 (전체 + 매장별 동시) ───────────────
+// 19개 매장 순차 조회 1회로 overall과 stores 캐시를 동시에 생성
+// → precomputeAndCache 실행 시간 절반으로 단축
+function computeAndCachePeriod(startDate, endDate) {
+  const cache = CacheService.getScriptCache();
+
+  const requests = EZ_STORES.map(store => ({
+    url    : 'https://ecn5.ezadmin.co.kr/function.php',
+    method : 'POST',
+    headers: { 'Cookie': buildEZCookie(), 'Content-Type': 'application/x-www-form-urlencoded',
+               'Referer': 'https://ecn5.ezadmin.co.kr/template.html?template=E700' },
+    payload: 'template=E700&action=grid&str_desc_select=' + store.code +
+             '&start_date=' + startDate + '&end_date=' + endDate +
+             '&sorting=qty&limit=500&category=0&time_check=false',
+    followRedirects: true, muteHttpExceptions: true
+  }));
+
+  const responses = fetchEZBatch(requests);
+
+  // 세션 만료 감지
+  if (responses[0].getContentText().includes('세션이 종료')) {
+    throw new Error('session_expired');
+  }
+
+  // 매장별 데이터 파싱 (allItems = 전체 합산용, storeResults = 매장별용)
+  const allItems = [];
+  const storeResults = EZ_STORES.map((store, idx) => {
+    const html  = responses[idx].getContentText();
+    const items = (html && !html.includes('세션이 종료')) ? (parseEZResponse(html) || []) : [];
+    allItems.push(...items);
+    return { name: store.name, color: store.color, products: aggregateEZProducts(items).slice(0, 10) };
+  });
+
+  const now = Utilities.formatDate(new Date(), 'Asia/Seoul', 'yyyy.MM.dd(EEE) HH:mm');
+
+  // 전체 TOP 20 캐시 저장 (6시간)
+  const overallResult = {
+    updatedAt: now, view: 'overall', startDate, endDate,
+    overall: aggregateEZProducts(allItems).slice(0, 20)
+  };
+  try { cache.put('ez_overall_' + startDate + '_' + endDate, JSON.stringify(overallResult), 21600); } catch(_) {}
+
+  // 매장별 TOP 10 캐시 저장 (6시간)
+  const storesResult = {
+    updatedAt: now, view: 'stores', startDate, endDate,
+    stores: storeResults
+  };
+  try { cache.put('ez_stores_' + startDate + '_' + endDate, JSON.stringify(storesResult), 21600); } catch(_) {}
+
+  return overallResult.overall.length;
+}
+
 // ── 전체 매장 뷰: EZ_STORES 순차 요청 후 TOP 20 집계 ──────────
 function getOverallView(startDate, endDate, noCache) {
   const cacheKey = 'ez_overall_' + startDate + '_' + endDate;
@@ -190,7 +242,7 @@ function getOverallView(startDate, endDate, noCache) {
                'Referer': 'https://ecn5.ezadmin.co.kr/template.html?template=E700' },
     payload: 'template=E700&action=grid&str_desc_select=' + store.code +
              '&start_date=' + startDate + '&end_date=' + endDate +
-             '&sorting=qty&limit=3000&category=0&time_check=false',
+             '&sorting=qty&limit=500&category=0&time_check=false',
     followRedirects: true, muteHttpExceptions: true
   }));
 
@@ -239,7 +291,7 @@ function getStoresView(startDate, endDate, noCache) {
                'Referer': 'https://ecn5.ezadmin.co.kr/template.html?template=E700' },
     payload: 'template=E700&action=grid&str_desc_select=' + store.code +
              '&start_date=' + startDate + '&end_date=' + endDate +
-             '&sorting=qty&limit=3000&category=0&time_check=false',
+             '&sorting=qty&limit=500&category=0&time_check=false',
     followRedirects: true, muteHttpExceptions: true
   }));
 
@@ -257,7 +309,7 @@ function getStoresView(startDate, endDate, noCache) {
   };
 
   const jsonStr = JSON.stringify(result);
-  try { cache.put(cacheKey, jsonStr, 600); } catch(_) {}
+  try { cache.put(cacheKey, jsonStr, 21600); } catch(_) {}
   return ContentService.createTextOutput(jsonStr).setMimeType(ContentService.MimeType.JSON);
 }
 
@@ -552,11 +604,11 @@ function precomputeAndCache() {
   }
   Logger.log('✅ 세션 확인 완료');
 
-  // 각 기간 사전 계산 (캐시 1시간)
+  // 각 기간 사전 계산: 19개 요청 1회로 전체+매장별 동시 캐싱
   periods.forEach(({ s, e }) => {
     try {
-      getOverallView(s, e, true); // noCache=true → 강제 재계산 후 캐시 저장
-      Logger.log('✅ 캐시 완료: ' + s + ' ~ ' + e);
+      const cnt = computeAndCachePeriod(s, e);
+      Logger.log('✅ 캐시 완료 (전체+매장별): ' + s + ' ~ ' + e + ' / 전체 상품 수: ' + cnt);
     } catch(err) {
       Logger.log('❌ 오류: ' + s + ' ~ ' + e + ' — ' + err.message);
     }

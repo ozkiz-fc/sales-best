@@ -541,7 +541,16 @@
       let url = API_URL + '?startDate=' + state.startDate + '&endDate=' + state.endDate;
       if (!isOverall) url += '&view=stores';
 
-      const res  = await fetch(url);
+      // 90초 타임아웃 (사전 계산 캐시 없을 때 무한 로딩 방지)
+      const controller = new AbortController();
+      const tid = setTimeout(() => controller.abort(), 90000);
+      let res;
+      try {
+        res = await fetch(url, { signal: controller.signal });
+      } finally {
+        clearTimeout(tid);
+      }
+
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const data = await res.json();
 
@@ -555,7 +564,11 @@
       if (data.updatedAt) document.getElementById('updated-at').textContent = data.updatedAt + ' 업데이트';
       renderContent(data);
     } catch(err) {
-      showError(err.message);
+      if (err.name === 'AbortError') {
+        showError('요청 시간이 초과됐습니다 (90초).\n사전 계산 캐시가 없을 때 발생합니다.\nApps Script에서 precomputeAndCache를 실행해 주세요.');
+      } else {
+        showError(err.message);
+      }
     } finally {
       document.getElementById('refresh-btn').classList.remove('spinning');
     }
