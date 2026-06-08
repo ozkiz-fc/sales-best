@@ -543,8 +543,11 @@ const EZ_STORES = [
   { name:'평택',  code:150, color:'#4527a0' },
   { name:'고척',  code:152, color:'#01579b' },
   { name:'원주',  code:156, color:'#1b5e20' },
-  { name:'마리오',code:159, color:'#ff8f00' },
-  { name:'창원',  code:162, color:'#0d47a1' }
+  { name:'마리오',  code:159, color:'#ff8f00' },
+  { name:'창원',    code:162, color:'#0d47a1' },
+  { name:'STCO현풍',code:153, color:'#c62828' },
+  { name:'STCO용인',code:157, color:'#00796b' },
+  { name:'면세점',  code:100, color:'#5e35b1' }
 ];
 
 // ── 인증 쿠키 생성 ──────────────────────────────────────────
