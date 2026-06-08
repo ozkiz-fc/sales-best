@@ -116,41 +116,77 @@ function debugHeaders() {
 
 // ── EZAdmin 순차 요청 + 세션 로테이션 자동 갱신 ──────────────
 // EZAdmin은 매 요청마다 PHPSESSID를 교체함 → 순차로 최신 쿠키를 사용해야 함
+// ⚠️ 세션 만료 응답에서는 PHPSESSID를 저장하지 않음 (유효한 세션 덮어쓰기 방지)
 function fetchEZBatch(requests) {
   const htmls = new Array(requests.length).fill('');
   const props = PropertiesService.getScriptProperties();
 
   for (let i = 0; i < requests.length; i++) {
-    // 항상 최신 PHPSESSID로 쿠키 재구성
     const req = Object.assign({}, requests[i], {
       headers: Object.assign({}, requests[i].headers, { 'Cookie': buildEZCookie() })
     });
 
     const resp = UrlFetchApp.fetch(req.url, req);
+    const h    = resp.getContentText();
 
-    // 응답에서 새 PHPSESSID 자동 저장 (세션 로테이션 대응)
-    const sc = [].concat(resp.getAllHeaders()['Set-Cookie'] || []);
-    const ns = sc.map(c => c.split(';')[0]).find(c => /^PHPSESSID=.+/.test(c));
-    if (ns) props.setProperty('PHPSESSID', ns.split('=')[1]);
-
-    const h = resp.getContentText();
     if (!h.includes('세션이 종료')) {
+      // ✅ 성공 시에만 PHPSESSID 저장
+      const sc = [].concat(resp.getAllHeaders()['Set-Cookie'] || []);
+      const ns = sc.map(c => c.split(';')[0]).find(c => /^PHPSESSID=.+/.test(c));
+      if (ns) props.setProperty('PHPSESSID', ns.split('=')[1]);
       htmls[i] = h;
     } else {
-      // 세션 만료 시 1회 즉시 재시도 (다른 서버로 라우팅될 수 있음)
+      // ❌ 세션 만료 → PHPSESSID 저장 안 함 → 즉시 재시도 (로드밸런서 다른 서버로 라우팅)
       Utilities.sleep(300);
       const req2 = Object.assign({}, req, {
         headers: Object.assign({}, req.headers, { 'Cookie': buildEZCookie() })
       });
       const resp2 = UrlFetchApp.fetch(req2.url, req2);
-      const sc2 = [].concat(resp2.getAllHeaders()['Set-Cookie'] || []);
-      const ns2 = sc2.map(c => c.split(';')[0]).find(c => /^PHPSESSID=.+/.test(c));
-      if (ns2) props.setProperty('PHPSESSID', ns2.split('=')[1]);
-      htmls[i] = resp2.getContentText().includes('세션이 종료') ? '' : resp2.getContentText();
+      const h2    = resp2.getContentText();
+      if (!h2.includes('세션이 종료')) {
+        // ✅ 재시도 성공 시에만 PHPSESSID 저장
+        const sc2 = [].concat(resp2.getAllHeaders()['Set-Cookie'] || []);
+        const ns2 = sc2.map(c => c.split(';')[0]).find(c => /^PHPSESSID=.+/.test(c));
+        if (ns2) props.setProperty('PHPSESSID', ns2.split('=')[1]);
+        htmls[i] = h2;
+      }
+      // 재시도도 실패 시 htmls[i]는 '' (빈 문자열 유지)
     }
   }
 
   return htmls.map(h => ({ getContentText: () => h }));
+}
+
+// ── 전체 매장 단일 조회 (로드밸런서 대응 재시도 포함) ───────────
+// 로드밸런서가 2개 서버를 교대로 라우팅할 때:
+//   1차 → 서버B (세션 없음) → 실패 → 재시도 → 서버A (세션 있음) → 성공
+// ⚠️ 성공 시에만 PHPSESSID 저장 (실패 응답으로 유효한 세션 덮어쓰기 방지)
+function fetchEZAllStores(startDate, endDate) {
+  const props   = PropertiesService.getScriptProperties();
+  const payload = 'template=E700&action=grid' +
+                  '&start_date=' + startDate + '&end_date=' + endDate +
+                  '&sorting=qty&limit=500&category=0&time_check=false';
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) Utilities.sleep(300);
+    const resp = UrlFetchApp.fetch('https://ecn5.ezadmin.co.kr/function.php', {
+      method : 'POST',
+      headers: { 'Cookie': buildEZCookie(), 'Content-Type': 'application/x-www-form-urlencoded',
+                 'Referer': 'https://ecn5.ezadmin.co.kr/template.html?template=E700' },
+      payload: payload, muteHttpExceptions: true
+    });
+
+    const html = resp.getContentText();
+    if (!html.includes('세션이 종료')) {
+      // ✅ 성공 시에만 PHPSESSID 저장
+      const sc = [].concat(resp.getAllHeaders()['Set-Cookie'] || []);
+      const ns = sc.map(c => c.split(';')[0]).find(c => /^PHPSESSID=.+/.test(c));
+      if (ns) props.setProperty('PHPSESSID', ns.split('=')[1]);
+      return html;
+    }
+    Logger.log('  전체 조회 재시도 ' + (attempt + 1) + '/3 (로드밸런서 대응)');
+  }
+  return null; // 3회 모두 실패
 }
 
 // ── 진입점 ────────────────────────────────────────────────
@@ -181,24 +217,9 @@ function computeAndCachePeriod(startDate, endDate) {
   const cache = CacheService.getScriptCache();
   const now   = Utilities.formatDate(new Date(), 'Asia/Seoul', 'yyyy.MM.dd(EEE) HH:mm');
 
-  // ── 1. 전체 베스트 ─────────────────────────────────────────────
-  const allResp = UrlFetchApp.fetch('https://ecn5.ezadmin.co.kr/function.php', {
-    method : 'POST',
-    headers: { 'Cookie': buildEZCookie(), 'Content-Type': 'application/x-www-form-urlencoded',
-               'Referer': 'https://ecn5.ezadmin.co.kr/template.html?template=E700' },
-    payload: 'template=E700&action=grid' +
-             '&start_date=' + startDate + '&end_date=' + endDate +
-             '&sorting=qty&limit=500&category=0&time_check=false',
-    muteHttpExceptions: true
-  });
-
-  // 세션 로테이션 저장
-  const sc = [].concat(allResp.getAllHeaders()['Set-Cookie'] || []);
-  const ns = sc.map(c => c.split(';')[0]).find(c => /^PHPSESSID=.+/.test(c));
-  if (ns) PropertiesService.getScriptProperties().setProperty('PHPSESSID', ns.split('=')[1]);
-
-  const allHtml = allResp.getContentText();
-  if (allHtml.includes('세션이 종료')) throw new Error('session_expired');
+  // ── 1. 전체 베스트: fetchEZAllStores (재시도 포함) ──────────────
+  const allHtml = fetchEZAllStores(startDate, endDate);
+  if (!allHtml) throw new Error('session_expired');
 
   const overallItems = parseEZResponse(allHtml) || [];
   const overallResult = {
@@ -271,24 +292,9 @@ function getOverallView(startDate, endDate, noCache) {
     if (cached) return ContentService.createTextOutput(cached).setMimeType(ContentService.MimeType.JSON);
   }
 
-  // str_desc_select 생략 = 전 매장 조회
-  const resp = UrlFetchApp.fetch('https://ecn5.ezadmin.co.kr/function.php', {
-    method : 'POST',
-    headers: { 'Cookie': buildEZCookie(), 'Content-Type': 'application/x-www-form-urlencoded',
-               'Referer': 'https://ecn5.ezadmin.co.kr/template.html?template=E700' },
-    payload: 'template=E700&action=grid' +
-             '&start_date=' + startDate + '&end_date=' + endDate +
-             '&sorting=qty&limit=500&category=0&time_check=false',
-    muteHttpExceptions: true
-  });
-
-  // 세션 로테이션 저장
-  const sc = [].concat(resp.getAllHeaders()['Set-Cookie'] || []);
-  const ns = sc.map(c => c.split(';')[0]).find(c => /^PHPSESSID=.+/.test(c));
-  if (ns) PropertiesService.getScriptProperties().setProperty('PHPSESSID', ns.split('=')[1]);
-
-  const html = resp.getContentText();
-  if (html.includes('세션이 종료')) {
+  // fetchEZAllStores: 재시도 포함, 성공 시에만 PHPSESSID 저장
+  const html = fetchEZAllStores(startDate, endDate);
+  if (!html) {
     return ContentService.createTextOutput(JSON.stringify({ error: 'session_expired' }))
       .setMimeType(ContentService.MimeType.JSON);
   }
