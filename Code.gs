@@ -168,7 +168,12 @@ function fetchEZAllStores(startDate, endDate) {
                   '&sorting=qty&limit=500&category=0&time_check=false';
 
   for (let attempt = 0; attempt < 3; attempt++) {
-    if (attempt > 0) Utilities.sleep(300);
+    if (attempt > 0) {
+      // 로드밸런서 세션 복제(lazy replication)에 약 10초 소요
+      // → 300ms 재시도는 복제 완료 전이라 항상 실패 / 10초 대기 후 재시도해야 성공
+      Logger.log('  전체 조회 재시도 ' + attempt + '/2 — 10초 대기 중 (로드밸런서 복제 대기)');
+      Utilities.sleep(10000);
+    }
     const resp = UrlFetchApp.fetch('https://ecn5.ezadmin.co.kr/function.php', {
       method : 'POST',
       headers: { 'Cookie': buildEZCookie(), 'Content-Type': 'application/x-www-form-urlencoded',
@@ -184,9 +189,8 @@ function fetchEZAllStores(startDate, endDate) {
       if (ns) props.setProperty('PHPSESSID', ns.split('=')[1]);
       return html;
     }
-    Logger.log('  전체 조회 재시도 ' + (attempt + 1) + '/3 (로드밸런서 대응)');
   }
-  return null; // 3회 모두 실패
+  return null; // 3회 모두 실패 (진짜 세션 만료)
 }
 
 // ── 진입점 ────────────────────────────────────────────────
