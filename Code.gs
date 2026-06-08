@@ -215,25 +215,15 @@ function doGet(e) {
 }
 
 // ── 기간별 일괄 계산 & 캐시 ────────────────────────────────────
-// • 전체 베스트: str_desc_select 없이 1번 요청 → 이지어드민 전체 데이터와 정확히 일치
-// • 매장별 베스트: EZ_STORES 순차 조회
+// 실행 순서:
+//   1. 매장별 22개 순차 조회 → 매장별 캐시 저장 (항상 실행)
+//   2. 전체 조회 시도 → 성공 시 전체 캐시, 실패 시 1번 데이터로 합산 폴백
+// → 어제처럼 전체 조회가 막혀있어도 매장별+전체 모두 캐싱 가능
 function computeAndCachePeriod(startDate, endDate) {
   const cache = CacheService.getScriptCache();
   const now   = Utilities.formatDate(new Date(), 'Asia/Seoul', 'yyyy.MM.dd(EEE) HH:mm');
 
-  // ── 1. 전체 베스트: fetchEZAllStores (재시도 포함) ──────────────
-  const allHtml = fetchEZAllStores(startDate, endDate);
-  if (!allHtml) throw new Error('session_expired');
-
-  const overallItems = parseEZResponse(allHtml) || [];
-  const overallResult = {
-    updatedAt: now, view: 'overall', startDate, endDate,
-    overall: aggregateEZProducts(overallItems).slice(0, 20)
-  };
-  try { cache.put('ez_overall_' + startDate + '_' + endDate, JSON.stringify(overallResult), 21600); } catch(_) {}
-  Logger.log('  전체: ' + overallResult.overall.length + '개 상품');
-
-  // ── 2. 매장별 베스트: EZ_STORES 순차 조회 ────────────────────────
+  // ── 1. 매장별 베스트: EZ_STORES 순차 조회 (항상 먼저 실행) ──────────
   const storeRequests = EZ_STORES.map(store => ({
     url    : 'https://ecn5.ezadmin.co.kr/function.php',
     method : 'POST',
@@ -247,16 +237,35 @@ function computeAndCachePeriod(startDate, endDate) {
 
   const storeResponses = fetchEZBatch(storeRequests);
 
+  // 세션 만료 감지 (첫 번째 매장 응답으로 확인)
+  if (storeResponses[0].getContentText().includes('세션이 종료')) throw new Error('session_expired');
+
+  const allItemsFromStores = [];
   const storeResults = EZ_STORES.map((store, idx) => {
     const html  = storeResponses[idx].getContentText();
     const items = (html && !html.includes('세션이 종료')) ? (parseEZResponse(html) || []) : [];
+    allItemsFromStores.push(...items);
     return { name: store.name, color: store.color, products: aggregateEZProducts(items).slice(0, 10) };
   });
 
-  const storesResult = {
-    updatedAt: now, view: 'stores', startDate, endDate, stores: storeResults
-  };
+  // 매장별 캐시 저장
+  const storesResult = { updatedAt: now, view: 'stores', startDate, endDate, stores: storeResults };
   try { cache.put('ez_stores_' + startDate + '_' + endDate, JSON.stringify(storesResult), 21600); } catch(_) {}
+
+  // ── 2. 전체 베스트: 전체 조회 시도 → 실패 시 개별 매장 합산 폴백 ──
+  const allHtml = fetchEZAllStores(startDate, endDate);
+  const overallItems = allHtml
+    ? (parseEZResponse(allHtml) || [])
+    : allItemsFromStores;  // 폴백: 개별 매장 데이터 합산
+
+  if (!allHtml) Logger.log('  ⚠️ 전체 조회 실패 → 개별 매장 합산으로 대체');
+
+  const overallResult = {
+    updatedAt: now, view: 'overall', startDate, endDate,
+    overall: aggregateEZProducts(overallItems).slice(0, 20)
+  };
+  try { cache.put('ez_overall_' + startDate + '_' + endDate, JSON.stringify(overallResult), 21600); } catch(_) {}
+  Logger.log('  전체: ' + overallResult.overall.length + '개 상품' + (allHtml ? '' : ' (매장별 합산)'));
 
   return overallResult.overall.length;
 }
