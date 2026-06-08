@@ -174,13 +174,42 @@ function doGet(e) {
   }
 }
 
-// ── 기간별 일괄 계산 & 캐시 (전체 + 매장별 동시) ───────────────
-// 19개 매장 순차 조회 1회로 overall과 stores 캐시를 동시에 생성
-// → precomputeAndCache 실행 시간 절반으로 단축
+// ── 기간별 일괄 계산 & 캐시 ────────────────────────────────────
+// • 전체 베스트: str_desc_select 없이 1번 요청 → 이지어드민 전체 데이터와 정확히 일치
+// • 매장별 베스트: EZ_STORES 순차 조회
 function computeAndCachePeriod(startDate, endDate) {
   const cache = CacheService.getScriptCache();
+  const now   = Utilities.formatDate(new Date(), 'Asia/Seoul', 'yyyy.MM.dd(EEE) HH:mm');
 
-  const requests = EZ_STORES.map(store => ({
+  // ── 1. 전체 베스트 ─────────────────────────────────────────────
+  const allResp = UrlFetchApp.fetch('https://ecn5.ezadmin.co.kr/function.php', {
+    method : 'POST',
+    headers: { 'Cookie': buildEZCookie(), 'Content-Type': 'application/x-www-form-urlencoded',
+               'Referer': 'https://ecn5.ezadmin.co.kr/template.html?template=E700' },
+    payload: 'template=E700&action=grid' +
+             '&start_date=' + startDate + '&end_date=' + endDate +
+             '&sorting=qty&limit=500&category=0&time_check=false',
+    muteHttpExceptions: true
+  });
+
+  // 세션 로테이션 저장
+  const sc = [].concat(allResp.getAllHeaders()['Set-Cookie'] || []);
+  const ns = sc.map(c => c.split(';')[0]).find(c => /^PHPSESSID=.+/.test(c));
+  if (ns) PropertiesService.getScriptProperties().setProperty('PHPSESSID', ns.split('=')[1]);
+
+  const allHtml = allResp.getContentText();
+  if (allHtml.includes('세션이 종료')) throw new Error('session_expired');
+
+  const overallItems = parseEZResponse(allHtml) || [];
+  const overallResult = {
+    updatedAt: now, view: 'overall', startDate, endDate,
+    overall: aggregateEZProducts(overallItems).slice(0, 20)
+  };
+  try { cache.put('ez_overall_' + startDate + '_' + endDate, JSON.stringify(overallResult), 21600); } catch(_) {}
+  Logger.log('  전체: ' + overallResult.overall.length + '개 상품');
+
+  // ── 2. 매장별 베스트: EZ_STORES 순차 조회 ────────────────────────
+  const storeRequests = EZ_STORES.map(store => ({
     url    : 'https://ecn5.ezadmin.co.kr/function.php',
     method : 'POST',
     headers: { 'Cookie': buildEZCookie(), 'Content-Type': 'application/x-www-form-urlencoded',
@@ -191,42 +220,49 @@ function computeAndCachePeriod(startDate, endDate) {
     followRedirects: true, muteHttpExceptions: true
   }));
 
-  const responses = fetchEZBatch(requests);
+  const storeResponses = fetchEZBatch(storeRequests);
 
-  // 세션 만료 감지
-  if (responses[0].getContentText().includes('세션이 종료')) {
-    throw new Error('session_expired');
-  }
-
-  // 매장별 데이터 파싱 (allItems = 전체 합산용, storeResults = 매장별용)
-  const allItems = [];
   const storeResults = EZ_STORES.map((store, idx) => {
-    const html  = responses[idx].getContentText();
+    const html  = storeResponses[idx].getContentText();
     const items = (html && !html.includes('세션이 종료')) ? (parseEZResponse(html) || []) : [];
-    allItems.push(...items);
     return { name: store.name, color: store.color, products: aggregateEZProducts(items).slice(0, 10) };
   });
 
-  const now = Utilities.formatDate(new Date(), 'Asia/Seoul', 'yyyy.MM.dd(EEE) HH:mm');
-
-  // 전체 TOP 20 캐시 저장 (6시간)
-  const overallResult = {
-    updatedAt: now, view: 'overall', startDate, endDate,
-    overall: aggregateEZProducts(allItems).slice(0, 20)
-  };
-  try { cache.put('ez_overall_' + startDate + '_' + endDate, JSON.stringify(overallResult), 21600); } catch(_) {}
-
-  // 매장별 TOP 10 캐시 저장 (6시간)
   const storesResult = {
-    updatedAt: now, view: 'stores', startDate, endDate,
-    stores: storeResults
+    updatedAt: now, view: 'stores', startDate, endDate, stores: storeResults
   };
   try { cache.put('ez_stores_' + startDate + '_' + endDate, JSON.stringify(storesResult), 21600); } catch(_) {}
 
   return overallResult.overall.length;
 }
 
-// ── 전체 매장 뷰: EZ_STORES 순차 요청 후 TOP 20 집계 ──────────
+// ── 전체 조회 응답에 매장 정보가 포함되는지 확인 (1회 실행용) ────
+// 실행 후 로그에서 '상품 필드 목록'을 확인하세요.
+// str_desc 또는 store 관련 필드가 있으면 매장별도 1번 요청으로 처리 가능
+function debugAllStoresResponse() {
+  const ymd = Utilities.formatDate(new Date(new Date().getTime() - 86400000), 'Asia/Seoul', 'yyyy-MM-dd');
+  const resp = UrlFetchApp.fetch('https://ecn5.ezadmin.co.kr/function.php', {
+    method : 'POST',
+    headers: { 'Cookie': buildEZCookie(), 'Content-Type': 'application/x-www-form-urlencoded',
+               'Referer': 'https://ecn5.ezadmin.co.kr/template.html?template=E700' },
+    payload: 'template=E700&action=grid' +
+             '&start_date=' + ymd + '&end_date=' + ymd +
+             '&sorting=qty&limit=10&category=0&time_check=false',
+    muteHttpExceptions: true
+  }).getContentText();
+
+  if (resp.includes('세션이 종료')) { Logger.log('❌ 세션 만료'); return; }
+
+  const items = parseEZResponse(resp);
+  Logger.log('상품 수: ' + items.length);
+  if (items.length > 0) {
+    Logger.log('상품 필드 목록: ' + Object.keys(items[0]).join(', '));
+    Logger.log('첫 번째 상품 전체: ' + JSON.stringify(items[0]));
+    Logger.log('두 번째 상품 전체: ' + JSON.stringify(items[1] || {}));
+  }
+}
+
+// ── 전체 매장 뷰: str_desc_select 없이 1번 요청 → 이지어드민 전체와 일치 ─
 function getOverallView(startDate, endDate, noCache) {
   const cacheKey = 'ez_overall_' + startDate + '_' + endDate;
   const cache    = CacheService.getScriptCache();
@@ -235,33 +271,30 @@ function getOverallView(startDate, endDate, noCache) {
     if (cached) return ContentService.createTextOutput(cached).setMimeType(ContentService.MimeType.JSON);
   }
 
-  const requests = EZ_STORES.map(store => ({
-    url    : 'https://ecn5.ezadmin.co.kr/function.php',
+  // str_desc_select 생략 = 전 매장 조회
+  const resp = UrlFetchApp.fetch('https://ecn5.ezadmin.co.kr/function.php', {
     method : 'POST',
     headers: { 'Cookie': buildEZCookie(), 'Content-Type': 'application/x-www-form-urlencoded',
                'Referer': 'https://ecn5.ezadmin.co.kr/template.html?template=E700' },
-    payload: 'template=E700&action=grid&str_desc_select=' + store.code +
+    payload: 'template=E700&action=grid' +
              '&start_date=' + startDate + '&end_date=' + endDate +
              '&sorting=qty&limit=500&category=0&time_check=false',
-    followRedirects: true, muteHttpExceptions: true
-  }));
-
-  const responses = fetchEZBatch(requests);
-
-  // 세션 만료 감지
-  const firstHtml = responses[0].getContentText();
-  if (firstHtml.includes('세션이 종료')) {
-    return ContentService.createTextOutput(JSON.stringify({ error: 'session_expired' })).setMimeType(ContentService.MimeType.JSON);
-  }
-
-  // 전체 합산 → TOP 20
-  const allItems = [];
-  responses.forEach(resp => {
-    const html = resp.getContentText();
-    if (html && !html.includes('세션이 종료')) allItems.push(...(parseEZResponse(html) || []));
+    muteHttpExceptions: true
   });
 
-  const overall = aggregateEZProducts(allItems).slice(0, 20);
+  // 세션 로테이션 저장
+  const sc = [].concat(resp.getAllHeaders()['Set-Cookie'] || []);
+  const ns = sc.map(c => c.split(';')[0]).find(c => /^PHPSESSID=.+/.test(c));
+  if (ns) PropertiesService.getScriptProperties().setProperty('PHPSESSID', ns.split('=')[1]);
+
+  const html = resp.getContentText();
+  if (html.includes('세션이 종료')) {
+    return ContentService.createTextOutput(JSON.stringify({ error: 'session_expired' }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+
+  const items   = parseEZResponse(html) || [];
+  const overall = aggregateEZProducts(items).slice(0, 20);
   const result  = {
     updatedAt: Utilities.formatDate(new Date(), 'Asia/Seoul', 'yyyy.MM.dd(EEE) HH:mm'),
     view: 'overall', startDate, endDate, overall
